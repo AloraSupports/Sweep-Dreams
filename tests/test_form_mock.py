@@ -60,3 +60,21 @@ def test_fill_verify_and_guard(cfg, fake_ax, export_rows):
     assert vals == {"npi": "1234567893", "svc": "Personal Care - 5761", "crit": 1,
                     "sub": 0, "date": "2026-09-21"}
     assert submitted is True
+
+
+def test_watcher_ignores_pages_that_merely_mention_submitted(cfg):
+    form = dict(cfg.form, url=MOCK)
+
+    async def go(page):
+        await page.set_content("<div><button>Start</button></div><p>Requests submitted after 5 PM "
+                               "are handled the next day. Thank you.</p>")
+        task = asyncio.create_task(watch_for_submission(page, form, poll=0.1))
+        await asyncio.sleep(0.5)
+        still_waiting = not task.done()
+        await page.set_content('<input id="short_text_mkk9gc42-input"><p>Thank you</p>')
+        await asyncio.sleep(0.4)
+        still_waiting2 = not task.done()
+        await page.set_content("<h1>Thank you for submitting!</h1>")
+        return still_waiting, still_waiting2, await asyncio.wait_for(task, 5)
+
+    assert run(_with_page(go)) == (True, True, True)

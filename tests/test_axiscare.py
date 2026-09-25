@@ -43,3 +43,11 @@ def test_wrong_columns_explained(tmp_path):
     write(tmp_path, "Name,Npi Number\n", "x\n")
     with pytest.raises(AxisCareError, match="Columns found"):
         ExportBackend(CFG, folder=tmp_path)
+
+
+def test_unreadable_date_is_an_error_not_an_open_ended_auth(tmp_path):
+    write(tmp_path, "First Name,Last Name,NPI\n",
+          "Medicaid ID,Service Code,Authorization Number,Start Date,End Date\n"
+          "1,5761,OLD,Sep 1 2025,Dec 31 2025\n")
+    with pytest.raises(AxisCareError, match="date_formats"):
+        ExportBackend(CFG, folder=tmp_path)

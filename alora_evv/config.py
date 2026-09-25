@@ -49,7 +49,19 @@ class Config:
         return set(self.rules.get("error_types", {})) | set(self.rules.get("decision_extras", []))
 
 
+def _string_keys(rules: dict) -> dict:
+    """Service codes typed without quotes load as ints; the code compares strings."""
+    for prog in (rules.get("programs") or {}).values():
+        if isinstance(prog.get("services"), dict):
+            prog["services"] = {str(k): v for k, v in prog["services"].items()}
+    if isinstance(rules.get("ambiguous_codes"), dict):
+        rules["ambiguous_codes"] = {str(k): v for k, v in rules["ambiguous_codes"].items()}
+    if isinstance(rules.get("reason_codes"), dict):
+        rules["reason_codes"] = {str(k): v for k, v in rules["reason_codes"].items()}
+    return rules
+
+
 def load_config(folder: Path | None = None) -> Config:
     return Config(settings=_load("settings.yaml", folder),
-                  rules=_load("rules.yaml", folder),
+                  rules=_string_keys(_load("rules.yaml", folder)),
                   form=_load("state_form.yaml", folder))

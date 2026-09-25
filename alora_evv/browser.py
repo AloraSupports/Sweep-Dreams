@@ -16,6 +16,10 @@ class SafetyStop(RuntimeError):
     pass
 
 
+class NoBrowser(RuntimeError):
+    pass
+
+
 async def element_text(locator) -> str:
     return (await locator.evaluate(
         "el => (el.innerText || el.value || el.getAttribute('aria-label') || '').trim()"
@@ -40,5 +44,5 @@ async def launch(pw, headless: bool, channel: str | None):
     try:
         return await pw.chromium.launch(headless=headless)
     except Exception as e:
-        raise SystemExit("No browser available. Install Google Chrome, or run:\n"
-                         "  python -m playwright install chromium") from e
+        raise NoBrowser("No browser available. Install Google Chrome, or run: "
+                        "python -m playwright install chromium") from e

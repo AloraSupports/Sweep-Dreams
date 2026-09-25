@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+from urllib.parse import urlencode, urlsplit
 
 from playwright.async_api import TimeoutError as PWTimeout
 
@@ -33,6 +34,15 @@ CANVAS_JS = """() => {
   return n;
 }"""
 
+# The text a person sees for a radio button, however the page attaches it.
+OPTION_TEXT_JS = """el => {
+  const wrap = el.closest('label'); if (wrap) return wrap.innerText;
+  if (el.id) { const l = document.querySelector('label[for="' + CSS.escape(el.id) + '"]'); if (l) return l.innerText; }
+  const lb = el.getAttribute('aria-labelledby');
+  if (lb) return lb.split(/\\s+/).map(i => (document.getElementById(i) || {}).innerText || '').join(' ');
+  return el.getAttribute('aria-label') || '';
+}"""
+
 
 class FormError(RuntimeError):
     pass
@@ -40,6 +50,24 @@ class FormError(RuntimeError):
 
 def _norm(s: str) -> str:
     return re.sub(r"\s+", " ", (s or "")).strip().lower()
+
+
+async def _find_option(page, value: str):
+    """The listbox option for `value`: an exact text match, else the only partial one."""
+    opts = page.locator("[role=option]")
+    exact, partial = [], []
+    for i in range(await opts.count()):
+        o = opts.nth(i)
+        if not await o.is_visible():
+            continue
+        text = _norm(await o.inner_text())
+        if text == _norm(value):
+            exact.append(o)
+        elif _norm(value) in text:
+            partial.append(o)
+    if exact:
+        return exact[0]
+    return partial[0] if len(partial) == 1 else None
 
 
 async def fill_form(page, payload: dict, form: dict, sign_name: str = "") -> list[str]:
@@ -76,22 +104,39 @@ async def fill_form(page, payload: dict, form: dict, sign_name: str = "") -> lis
         await safe_click(inp, FORBIDDEN_FORM)
         await inp.fill(str(value))
         await asyncio.sleep(0.4)
-        await page.keyboard.press("ArrowDown")
-        await page.keyboard.press("Enter")
+        # The option is chosen by clicking it, through the guard. Enter is never pressed
+        # inside a field: in a <form> it can submit the page, and no guard would see that.
+        option = await _find_option(page, str(value))
+        if option is None:
+            raise FormError(f"dropdown '{label}': no option matching '{value}' appeared — "
+                            "pick it by hand")
+        await safe_click(option, FORBIDDEN_FORM)
         await asyncio.sleep(0.3)
         landed = await inp.input_value()
         if landed and _norm(landed) != _norm(value):
             raise FormError(f"dropdown '{label}' selected '{landed}', wanted '{value}'")
+        if not landed:
+            chosen = page.locator('[aria-selected="true"]').filter(has_text=re.compile(re.escape(str(value)), re.I))
+            if await chosen.count() == 0:
+                problems.append(f"dropdown '{label}' shows blank after choosing '{value}' — confirm it")
 
     async def radio(group: str, value) -> None:
         if not value:
             return
         radios = page.locator(f'input[type=radio][name="{group}"]')
         for i in range(await radios.count()):
-            label = radios.nth(i).locator("xpath=ancestor::label[1]")
-            if _norm(await label.inner_text()).startswith(_norm(value)):
-                await safe_click(label, FORBIDDEN_FORM)
-                return
+            r = radios.nth(i)
+            if not _norm(await r.evaluate(OPTION_TEXT_JS)).startswith(_norm(value)):
+                continue
+            wrap = r.locator("xpath=ancestor::label[1]")
+            if await wrap.count():
+                target = wrap.first
+            else:
+                rid = await r.get_attribute("id")
+                for_label = page.locator(f'label[for="{rid}"]') if rid else None
+                target = for_label.first if for_label is not None and await for_label.count() else r
+            await safe_click(target, FORBIDDEN_FORM)
+            return
         raise FormError(f"option '{value}' not found in radio group {group}")
 
     dd, rg = form["dropdowns"], form["radio_groups"]
@@ -161,15 +206,25 @@ async def fill_form(page, payload: dict, form: dict, sign_name: str = "") -> lis
 
 
 async def watch_for_submission(page, form: dict, poll: float = 2.0) -> bool:
-    """True once the form's fields are gone and a thank-you/confirmation shows.
+    """True once the form is really gone and its confirmation shows.
 
-    Returns False if the tab is closed first.
+    Guards against false positives (a start screen that merely mentions 'submitted'):
+    the tab must still be on the form's site, show none of the form's fields and no
+    Start/Reset button, and contain the confirmation text (form.submitted_text if the
+    live test recorded it, else a generic match). Returns False if the tab is closed.
     """
     first = f"#{form['first_field_id']}"
-    done = re.compile(r"thank|submitted|received|response has been", re.I)
+    fields = ", ".join(f'[id="{fid}"]' for fid in form["text_fields"].values())
+    done = (re.compile(re.escape(form["submitted_text"]), re.I) if form.get("submitted_text")
+            else re.compile(r"thank|submitted|received|response has been", re.I))
+    site = urlsplit(form["url"]).netloc
+    start_reset = re.compile(r"^\s*(start|reset)\s*$", re.I)
     while not page.is_closed():
         try:
-            if await page.locator(first).count() == 0:
+            if (urlsplit(page.url).netloc == site
+                    and await page.locator(first).count() == 0
+                    and await page.locator(fields).count() == 0
+                    and await page.get_by_role("button", name=start_reset).count() == 0):
                 body = await page.evaluate("() => document.body ? document.body.innerText : ''")
                 if done.search(body or ""):
                     return True
@@ -183,17 +238,37 @@ async def watch_for_submission(page, form: dict, poll: float = 2.0) -> bool:
     return False
 
 
-def prefill_url(payload: dict, form: dict) -> str:
+def prefill_params(payload: dict, form: dict, include_phi: bool = False) -> dict[str, tuple[str, str]]:
+    """{payload key: (Monday column ID, value)} for the fields the prefilled link carries.
+
+    Keys listed in form.prefill_phi_keys (client name and Medicaid ID) are left out
+    unless include_phi is set: a URL is written to browser history and server logs,
+    which the typed-in desktop path never does. The reason's follow-up answer goes to
+    the column named by the reason's own sub_group, so it can't land in another
+    reason's question.
+    """
+    phi = set(form.get("prefill_phi_keys") or [])
+    out: dict[str, tuple[str, str]] = {}
+    for key, column in (form.get("prefill_columns") or {}).items():
+        if key in phi and not include_phi:
+            continue
+        value = payload.get(key)
+        if value in (None, ""):
+            continue
+        if key == "reasonSubOption":
+            column = payload.get("reasonSubGroup") or column
+        out[key] = (str(column), str(value))
+    if "reasonSubOption" not in out and payload.get("reasonSubGroup") and payload.get("reasonSubOption"):
+        out["reasonSubOption"] = (str(payload["reasonSubGroup"]), str(payload["reasonSubOption"]))
+    return out
+
+
+def prefill_url(payload: dict, form: dict, include_phi: bool = False) -> str:
     """The state form's URL with as many fields as possible filled via query parameters.
 
     Experimental: Monday forms accept ?column_id=value for many field types. Which ones
-    work for this form is confirmed by a live test; unconfirmed fields are simply left
-    for the reviewer to fill.
+    work for this form is confirmed by `alora-evv form prefill-test`; unconfirmed fields
+    are simply left for the reviewer to fill.
     """
-    from urllib.parse import urlencode
-    params = {}
-    for key, column in (form.get("prefill_columns") or {}).items():
-        value = payload.get(key)
-        if value not in (None, ""):
-            params[column] = str(value)
+    params = {column: value for column, value in prefill_params(payload, form, include_phi).values()}
     return form["url"] + ("?" + urlencode(params) if params else "")

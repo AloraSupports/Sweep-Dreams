@@ -6,12 +6,25 @@
 {% if p.notes %}<p class="flash">{{ p.notes|join('. ') }}.</p>{% endif %}
 
 <div class="actions">
-  <a class="btn primary" href="{{ form_url }}" target="_blank" rel="noopener">Open the state form</a>
+  <a class="btn primary" href="{{ form_url }}" target="_blank" rel="noopener noreferrer">Open the state form</a>
   <form method="post" action="/visit/{{ p.visit_id }}/submitted" class="inline">
+    <label><input type="checkbox" required> The form showed its thank-you page</label>
     <button type="submit">I submitted it</button>
   </form>
-  <span class="quiet">The form opens in a new tab with the fields below filled where the state's form allows it. Check every field, sign as {{ signer or 'yourself' }}, complete the captcha, and click Submit there.</span>
 </div>
+<p class="quiet">The form opens in a new tab with the fields below filled where the state's form allows it. Check every field, sign as {{ signer or 'yourself' }}, complete the captcha, and click Submit there. Marking a visit submitted hides it from sweeps for a month; Undo is on the main page.</p>
+
+{% if not prefill_phi %}
+{% set labels = {'recipientName': 'Recipient name', 'recipientMedicaidId': 'Recipient Medicaid ID',
+                 'caregiverName': 'Caregiver name', 'caregiverNpi': 'Caregiver NPI'} %}
+<h2>Type these into the form yourself</h2>
+<p class="quiet">Client details are kept out of the link so they never land in browser history. Select a value and copy it.</p>
+<dl class="fields">
+  {% for key in phi_keys %}
+  <dt>{{ labels.get(key, key) }}</dt><dd><input readonly value="{{ pl[key] }}"></dd>
+  {% endfor %}
+</dl>
+{% endif %}
 
 <h2>Values to check against the form</h2>
 <dl class="fields">
@@ -27,5 +40,6 @@
   <dt>Date of service</dt><dd>{{ pl.dateOfService }}</dd>
   <dt>Justification</dt><dd>{{ pl.justification or '—' }}</dd>
   <dt>Reason code</dt><dd>{{ pl.reasonCode or 'choose on the form' }}{% if pl.reasonSubOption %} → {{ pl.reasonSubOption }}{% endif %}</dd>
+  {% if pl.reasonFreeText %}<dt>Reason follow-up text</dt><dd>{{ pl.reasonFreeText }}</dd>{% endif %}
 </dl>
 {% endblock %}

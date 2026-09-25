@@ -9,6 +9,9 @@ portal:
   # {archived} is filled with true/false
   worklist_url: https://evv-dashboard.mobilecaregiverplus.com/provider/worklist/claims/list?payerId=NDHH&archived={archived}&page=0&size=100
   origin: https://evv-dashboard.mobilecaregiverplus.com
+  # Keep the portal login (cookies and token) in the data folder so the next run skips the
+  # login page. Set false to log in fresh every run and keep no login token on disk.
+  save_session: true
 
 # Portal claim statuses that count as "needs an adjustment".
 queue_statuses: [REJECTED, UNMATCHED, DENIED]
@@ -72,3 +75,7 @@ web:
   # none   = no sign-in. Local testing only. Never use on a server.
   auth: google
   allowed_domain: alorasupports.com
+  # The "Open the state form" link carries the visit's values in its address. Client
+  # name and Medicaid ID are left out (staff type those two) unless this is true, because
+  # a web address is kept in browser history and server logs.
+  prefill_phi: false

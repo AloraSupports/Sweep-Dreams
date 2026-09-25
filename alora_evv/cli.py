@@ -99,9 +99,10 @@ def cmd_form(args) -> int:
 
 def cmd_ledger(args) -> int:
     for r in Ledger().recent(args.limit):
-        sub = f"submitted {r['submitted_at'][:16]}" if r["submitted_at"] else f"prepared {r['prepared_at'][:16]}"
-        print(f"  {r['visit_id']}  {r['service_date']}  {r['error_type']:<5} reason {r['reason_code'] or '-':<4} "
-              f"{r['provider']:<11} {r['caregiver']:<24} {sub}")
+        sub = f"submitted {r['submitted_at'][:16]}" if r["submitted_at"] else f"prepared {(r['prepared_at'] or '')[:16]}"
+        print(f"  {r['visit_id']}  {r['service_date'] or '-':<10}  {r['error_type'] or '-':<5} "
+              f"reason {r['reason_code'] or '-':<4} {r['provider'] or '-':<11} "
+              f"{r['caregiver'] or '':<24} {sub}")
     return 0
 
 

@@ -72,9 +72,12 @@ class Ledger:
         self.db.commit()
 
     def mark_submitted(self, visit_id: str) -> None:
+        """Also drops any operator decision: if the visit comes back later with a new
+        problem, a person should look at it again rather than reuse the old choice."""
         self.db.execute("INSERT OR IGNORE INTO visits (visit_id, prepared_at) VALUES (?, ?)",
                         (visit_id, _now()))
         self.db.execute("UPDATE visits SET submitted_at=? WHERE visit_id=?", (_now(), visit_id))
+        self.db.execute("DELETE FROM decisions WHERE visit_id=?", (visit_id,))
         self.db.commit()
 
     def unmark_submitted(self, visit_id: str) -> None:

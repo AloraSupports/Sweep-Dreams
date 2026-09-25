@@ -13,7 +13,7 @@ from pathlib import Path
 
 from playwright.async_api import TimeoutError as PWTimeout
 
-from .browser import FORBIDDEN_PORTAL, safe_click
+from .browser import FORBIDDEN_PORTAL, SafetyStop, safe_click
 from .paths import data_dir, make_private
 
 PROVIDER_SWITCH = "evv-select-provider"
@@ -111,6 +111,8 @@ class Portal:
         print("portal: signed in")
         await page.evaluate("() => { try { localStorage.removeItem('evv_noseed') } catch (e) {} }")
 
+        if not self.p.get("save_session", True):
+            return  # portal.save_session: false — log in fresh every run, keep no token on disk
         try:
             await self.ctx.storage_state(path=str(state))
             make_private(state)
@@ -147,10 +149,25 @@ class Portal:
             await asyncio.sleep(0.5)
         raise PortalChanged(f"provider switch to '{menu_match}' didn't take effect")
 
+    async def _visit_id_column(self) -> int | None:
+        """Index of the 'Internal Visit ID' column, read from the table header."""
+        heads = await self.page.locator(".mat-mdc-header-cell").all_inner_texts()
+        for i, h in enumerate(heads):
+            if re.search(r"internal\s+visit\s+id", h, re.I):
+                return i
+        return None
+
     async def harvest(self, label: str, out_dir: Path, archived: bool = False
-                      ) -> tuple[Path | None, dict[str, list[str]]]:
-        """Search the Work List, read claim-error dialogs, download the export."""
+                      ) -> tuple[Path | None, dict[str, list[str]], list[str]]:
+        """Search the Work List, read claim-error dialogs, download the export.
+
+        Returns (export path, {visit ID: dialog lines} for every row whose dialog was
+        read — an empty list means no errors button — and a list of warnings for the
+        person running the sweep). A visit missing from the dict means its dialog
+        couldn't be read, so the pipeline can say so rather than assume 'no errors'.
+        """
         page = self.page
+        warnings: list[str] = []
         print(f"portal [{label}]: opening the {'Archive' if archived else 'Work List'}...")
         await page.goto(self.worklist_url(archived), wait_until="domcontentloaded")
         search = page.get_by_role("button", name=re.compile(r"^\s*search\s*$", re.I)).first
@@ -172,40 +189,60 @@ class Portal:
                 if await ok.count():
                     await safe_click(ok, FORBIDDEN_PORTAL)
                 print(f"portal [{label}]: no data")
-                return None, {}
+                return None, {}, warnings
             raise PortalChanged(f"unexpected dialog after Search: {text[:120]}")
 
-        rows = await page.locator(".mat-mdc-row").count()
-        if rows >= 100:
-            print(f"WARNING [{label}]: 100+ rows — only the first page is read. "
-                  "Paging isn't built yet; work the queue down and run again.")
+        rows = page.locator(".mat-mdc-row")
+        n = await rows.count()
+        if n >= 100:
+            warnings.append(f"{label}: the portal listed 100+ rows and only the first page "
+                            "was read — work the queue down and run again")
+        vid_col = await self._visit_id_column()
+        if vid_col is None:
+            warnings.append(f"{label}: no 'Internal Visit ID' column header found; visit IDs "
+                            "were guessed from the first 10-digit cell")
 
         errors: dict[str, list[str]] = {}
-        buttons = page.locator('button[aria-label="View claim matching errors"]')
-        try:
-            for i in range(await buttons.count()):
-                b = buttons.nth(i)
-                cells = await b.locator("xpath=ancestor::*[contains(@class,'mat-mdc-row')][1]") \
-                    .evaluate("el => [...el.querySelectorAll('.mat-mdc-cell')]"
-                              ".map(c => c.innerText.trim())")
-                vid = next((c for c in cells if re.fullmatch(r"\d{10}", c)), None)
-                await safe_click(b, FORBIDDEN_PORTAL)
+        for i in range(n):
+            row = rows.nth(i)
+            vid = None
+            try:
+                cells = await row.evaluate("el => [...el.querySelectorAll('.mat-mdc-cell')]"
+                                           ".map(c => c.innerText.trim())")
+                if vid_col is not None and vid_col < len(cells) and re.fullmatch(r"\d{10}", cells[vid_col]):
+                    vid = cells[vid_col]
+                else:
+                    vid = next((c for c in cells if re.fullmatch(r"\d{10}", c)), None)
+                if not vid:
+                    continue
+                errors[vid] = []
+                b = row.locator('button[aria-label="View claim matching errors"]')
+                if await b.count() == 0:
+                    continue
+                await safe_click(b.first, FORBIDDEN_PORTAL)
                 box = page.locator(DIALOG).last
                 await box.wait_for(timeout=8000)
                 text = await box.inner_text()
                 lines = [re.sub(r"\s*\t\s*", " ", ln).strip() for ln in text.splitlines()]
-                lines = [ln for ln in lines if ln and not ln.lower().startswith("type")]
-                if vid:
-                    errors[vid] = lines
-                close = page.get_by_role("button", name=re.compile(r"^\s*close\s*$", re.I))
+                errors[vid] = [ln for ln in lines if ln and not ln.lower().startswith("type")]
+                close = box.get_by_role("button", name=re.compile(r"^\s*close\s*$", re.I))
                 if await close.count():
                     await safe_click(close.first, FORBIDDEN_PORTAL)
                 else:
                     await page.keyboard.press("Escape")
                 await box.wait_for(state="hidden", timeout=6000)
-            print(f"portal [{label}]: read {len(errors)} claim-error details")
-        except Exception as e:
-            print(f"note [{label}]: couldn't read claim-error dialogs ({e}) — continuing")
+            except SafetyStop:
+                raise
+            except Exception as e:
+                if vid:
+                    errors.pop(vid, None)  # unknown, which is not the same as "no errors"
+                warnings.append(f"{label}: couldn't read the claim-error dialog for visit "
+                                f"{vid or '?'} ({str(e).splitlines()[0][:80]})")
+                try:
+                    await page.keyboard.press("Escape")
+                except Exception:
+                    pass
+        print(f"portal [{label}]: read {len(errors)} claim-error details")
 
         print(f"portal [{label}]: downloading the export...")
         select_all = page.locator("table thead mat-checkbox, th mat-checkbox").first
@@ -234,4 +271,4 @@ class Portal:
         download = await dl.value
         path = out_dir / f"export_{label}.csv"
         await download.save_as(str(path))
-        return path, errors
+        return path, errors, warnings

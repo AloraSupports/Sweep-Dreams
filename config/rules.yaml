@@ -79,6 +79,7 @@ decision_extras: [SKIP]
 #   sub_group:  follow-up question's field ID (radio group or dropdown)
 #   sub_label:  the follow-up question's label (used when it's a dropdown)
 #   sub_option: the answer to pick
+#   free_text:  optional text for the form's free-text follow-up box
 # ---------------------------------------------------------------------------
 reason_codes:
   "100": {label: Reason Code 100}   # TODO: meaning + follow-up question (overnight/split visits?)

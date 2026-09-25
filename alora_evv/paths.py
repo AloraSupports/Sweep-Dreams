@@ -17,16 +17,23 @@ CODE_ROOT = Path(__file__).resolve().parent.parent
 CONFIG_DIR = Path(os.environ.get("ALORA_EVV_CONFIG") or CODE_ROOT / "config")
 
 
-def data_dir() -> Path:
-    p = Path(os.environ.get("ALORA_EVV_DATA") or user_data_dir(APP_NAME, appauthor=False))
+def _private_dir(p: Path) -> Path:
     p.mkdir(parents=True, exist_ok=True)
+    if os.name != "nt":
+        try:
+            os.chmod(p, 0o700)
+        except OSError:
+            pass
     return p
+
+
+def data_dir() -> Path:
+    return _private_dir(Path(os.environ.get("ALORA_EVV_DATA")
+                             or user_data_dir(APP_NAME, appauthor=False)))
 
 
 def sub(name: str) -> Path:
-    p = data_dir() / name
-    p.mkdir(parents=True, exist_ok=True)
-    return p
+    return _private_dir(data_dir() / name)
 
 
 def make_private(path: Path) -> None:

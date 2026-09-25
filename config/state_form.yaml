@@ -33,6 +33,9 @@ email_selector: input[type=email]
 date_selector: input[type=date][aria-label="Date of Service"]
 first_field_id: short_text_mkk9gc42-input
 signature_input: "#signature_mkk9sr8h-type-section"
+# Text of the form's confirmation screen, once a live submission has shown it (e.g.
+# "Thank you"). Until then a generic thank-you/submitted match is used.
+# submitted_text: ""
 
 # Fields re-read after filling to confirm they stuck
 verify_fields: [providerName, caregiverNpi, recipientMedicaidId, visitId]
@@ -52,8 +55,14 @@ prefill_columns:
   serviceAuth:         short_text_mkn9d2dg
   visitId:             number_mkk9zzbc
   justification:       long_text_mkk9tj4v
+  reasonFreeText:      long_text_mkm8vb4s
   criticalError:       label__1
   reasonCode:          single_select_mkk96g2w
-  reasonSubOption:     single_select_mkm8p2yf
+  # The reason's follow-up answer (reasonSubOption) goes to the column named by that
+  # reason's sub_group in rules.yaml, so it needs no entry here.
   # TODO after the live test: providerPhone, providerEmail, evvVendor, programType,
   # serviceCode, dateOfService (their column IDs aren't visible in the page's field IDs)
+
+# Payload keys that hold client identifiers. They're left out of the link unless
+# settings.yaml -> web.prefill_phi is true.
+prefill_phi_keys: [recipientName, recipientMedicaidId]

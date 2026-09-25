@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# One-time setup on a fresh Debian 12 Google Cloud VM. Run as the login user:
-#   curl -fsSL https://raw.githubusercontent.com/AloraSupports/Sweep-Dreams/main/deploy/setup-vm.sh | bash
-# or copy this file over and run: bash setup-vm.sh
+# One-time setup on a fresh Debian 12 Google Cloud VM. Copy this file over and run:
+#   bash setup-vm.sh
+# (Not "curl | bash": the script waits for you to add a deploy key, which needs a terminal.)
 #
 # It installs Docker, clones the repo with a read-only deploy key, creates deploy/.env
 # from the example, and tells you what to fill in. It does not start the app until
@@ -38,7 +38,7 @@ echo "   Add this public key in GitHub: repo Settings -> Deploy keys -> Add (rea
 echo
 cat "$HOME/.ssh/id_ed25519.pub"
 echo
-read -r -p "   Press Enter once the deploy key is added... " _
+read -r -p "   Press Enter once the deploy key is added... " _ </dev/tty
 
 echo "== 3/5 Clone"
 if [ ! -d "$DIR/.git" ]; then
@@ -70,7 +70,7 @@ Next:
   1. nano $DIR/deploy/.env        (portal login, Google OAuth client, a random session secret)
   2. cd $DIR/deploy && docker compose up -d --build
   3. docker compose logs -f app   (Ctrl-C to stop watching)
-  4. Copy the AxisCare reports in:
+  4. Copy the AxisCare reports in (the folder exists from the first start):
        docker compose cp caregivers.csv app:/data/axiscare/
        docker compose cp authorizations.csv app:/data/axiscare/
   5. Open https://\$APP_DOMAIN, sign in, run a sweep with "prepare at most 1".

@@ -17,7 +17,7 @@ import re
 from urllib.parse import urlencode
 
 from .browser import FORBIDDEN_FORM, safe_click
-from .form import prefill_url
+from .form import prefill_params
 
 # Fake payload for the prefill test. Nothing here is real. The NPI is CMS's published example.
 FAKE_PAYLOAD = {
@@ -40,7 +40,9 @@ FAKE_PAYLOAD = {
     "dateOfService": "2020-01-01",
     "justification": "TEST ONLY. Do not submit.",
     "reasonCode": "Reason Code 140",
+    "reasonSubGroup": "single_select_mkm8p2yf",
     "reasonSubOption": "A. Failure to Clock In, Clock Out or Both",
+    "reasonFreeText": "TEST free text",
 }
 
 FIELDS_JS = """() => {
@@ -77,9 +79,16 @@ FIELDS_JS = """() => {
 
 VALUES_JS = """() => {
   const out = {fields: {}, radios: {}};
+  const labelFor = (el) => {
+    const wrap = el.closest('label'); if (wrap) return wrap.innerText.trim();
+    if (el.id) { const l = document.querySelector('label[for="' + CSS.escape(el.id) + '"]'); if (l) return l.innerText.trim(); }
+    const lb = el.getAttribute('aria-labelledby');
+    if (lb) return lb.split(/\\s+/).map(i => (document.getElementById(i) || {}).innerText || '').join(' ').trim();
+    return el.getAttribute('aria-label') || '';
+  };
   document.querySelectorAll('input, textarea, select').forEach(el => {
     if (el.type === 'hidden') return;
-    if (el.type === 'radio') { if (el.checked) out.radios[el.name] = (el.closest('label') || el).innerText.trim(); return; }
+    if (el.type === 'radio') { if (el.checked) out.radios[el.name] = labelFor(el); return; }
     const key = el.name || el.id || el.getAttribute('aria-label') || '';
     if (key) out.fields[key] = el.value || '';
   });
@@ -214,14 +223,13 @@ async def prefill_test(page, form: dict, url: str | None = None) -> dict:
     fields = [f for f in scan["fields"] if column_id(f)]
     radio_groups = scan["radio_groups"]
 
-    # Pass 1: the app's prefill_url, as the web version would open it.
-    app_url = prefill_url(FAKE_PAYLOAD, dict(form, url=base))
+    # Pass 1: the app's own link (every column it knows, fake values, PHI keys included
+    # since the values are fake), as the web version would build it.
+    app_params = prefill_params(FAKE_PAYLOAD, form, include_phi=True)
+    app_url = base + "?" + urlencode({c: v for c, v in app_params.values()})
     await open_form(page, app_url, form)
     vals = await page.evaluate(VALUES_JS)
-    for key, col in (form.get("prefill_columns") or {}).items():
-        want = str(FAKE_PAYLOAD.get(key, ""))
-        if not want:
-            continue
+    for key, (col, want) in app_params.items():
         landed = any(v.strip() == want for v in vals["fields"].values()) or \
             any(want.lower() in r.lower() for r in vals["radios"].values())
         report["app_url"][key] = {"column": col, "landed": landed}
@@ -250,16 +258,19 @@ async def prefill_test(page, form: dict, url: str | None = None) -> dict:
             any(value.lower() in r.lower() for r in vals["radios"].values())
         report["discovered"][col] = {"field": desc, "sent": value, "landed": landed}
 
-    # Suggest prefill_columns: payload keys whose text_fields/radio_groups IDs map to a
-    # column that accepted a value.
+    # Suggest prefill_columns: what the app's own link got in (pass A), plus columns
+    # that only took a value in pass B (the exact option text), which means the
+    # value in rules.yaml needs to be the full option text.
+    report["needs_exact_text"] = []
+    for key, r in report["app_url"].items():
+        if r["landed"]:
+            report["suggested_prefill_columns"][key] = r["column"]
+        elif report["discovered"].get(r["column"], {}).get("landed"):
+            report["needs_exact_text"].append(key)
     working = {c for c, r in report["discovered"].items() if r["landed"]}
     for key, fid in (form.get("text_fields") or {}).items():
         col = column_id({"id": fid})
-        if col in working:
-            report["suggested_prefill_columns"][key] = col
-    for key, group in (form.get("radio_groups") or {}).items():
-        col = column_id({"id": group})
-        if col in working:
+        if col in working and key not in report["app_url"]:
             report["suggested_prefill_columns"][key] = col
     return report
 
@@ -310,6 +321,9 @@ def print_prefill(rep: dict) -> None:
             print(f"  {key}: {col}")
     else:
         print("  (none landed — URL prefill doesn't work on this form; see README 'Roadmap' for the extension fallback)")
+    if rep.get("needs_exact_text"):
+        print("\nThese columns accept a value only as the exact option text; put the full text "
+              "from 'form inspect' into rules.yaml for: " + ", ".join(rep["needs_exact_text"]))
     print("\nNothing was submitted.")
 
 

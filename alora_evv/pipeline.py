@@ -14,6 +14,7 @@ from pathlib import Path
 from .axiscare import AxisCare, AxisCareError
 from .config import Config
 from .models import Held, Prepared
+from .paths import make_private
 from .validate import matches, npi_valid, parse_date
 
 # Portal export column names (Mobile Caregiver+ claims export)
@@ -34,6 +35,18 @@ COL = {
     "procedure": "Procedure Code",
 }
 
+# Columns a sweep can't work without. A renamed column must stop the run, not
+# quietly produce "0 visits need adjustment".
+REQUIRED = ("visit_id", "status", "cg_first", "cg_last", "medicaid_id", "agency_id",
+            "start", "procedure")
+
+UNREAD_NOTE = ("the portal's claim-error dialog wasn't read for this visit — "
+               "check it in the portal for other errors")
+
+
+class ExportError(RuntimeError):
+    """The portal export doesn't look like the one this app knows."""
+
 
 class Skip(Exception):
     def __init__(self, reason: str, needs_decision: bool = False):
@@ -48,8 +61,19 @@ class Skip(Exception):
 def load_export(path: Path, statuses: list[str]) -> list[dict]:
     wanted = {s.upper() for s in statuses}
     with open(path, newline="", encoding="utf-8-sig") as f:
-        rows = [{(k or "").strip(): (v or "").strip() for k, v in r.items()}
-                for r in csv.DictReader(f)]
+        reader = csv.DictReader(f, restkey="_extra")
+        header = [(h or "").strip() for h in (reader.fieldnames or [])]
+        missing = [COL[k] for k in REQUIRED if COL[k] not in header]
+        if missing:
+            raise ExportError(f"{path.name} is missing columns {missing}.\n"
+                              f"Columns found: {header}\n"
+                              "The portal may have renamed its export columns.")
+        rows = []
+        for r in reader:
+            # Surplus fields (an unquoted comma in a cell) arrive as a list under _extra;
+            # they're dropped rather than crashing the run.
+            rows.append({(k or "").strip(): (v or "").strip() for k, v in r.items()
+                         if isinstance(k, str) and isinstance(v, (str, type(None)))})
     return [r for r in rows if r.get(COL["status"], "").upper() in wanted]
 
 
@@ -65,22 +89,26 @@ def derive_verification_error(start_method: str, end_method: str) -> str | None:
 
 _CODE = re.compile(r"\b[A-Z][A-Z0-9]{2,7}\b")
 _NOT_CODES = {"CRITICAL", "ERROR", "WARNING", "TYPE", "INFO", "NON", "EVV", "N/A"}
+_NOT_BLOCKING = re.compile(r"\bnon[\s-]?critical\b", re.I)
 
 
-def blocking_codes(dialog_lines: list[str]) -> set[str]:
+def blocking_codes(dialog_lines: list[str], known: set[str] | None = None) -> set[str]:
     """Error codes from the portal's 'claim matching errors' dialog that block payment.
 
-    Rows marked CRITICAL/ERROR count, unless the portal says 'acceptable per payer rule'.
-    A blocking row with no recognizable code yields 'UNREADABLE' so the visit is held.
+    Rows marked CRITICAL/ERROR count ('Non-Critical' does not), unless the portal says
+    'acceptable per payer rule'. When a row holds several all-caps tokens, one that
+    rules.yaml knows wins over the first. A blocking row with no recognizable code
+    yields 'UNREADABLE' so the visit is held.
     """
     codes: set[str] = set()
     for line in dialog_lines or []:
-        if not re.search(r"\b(CRITICAL|ERROR)\b", line, re.I):
+        if not re.search(r"\b(CRITICAL|ERROR)\b", _NOT_BLOCKING.sub("", line), re.I):
             continue
         if "acceptable per payer rule" in line.lower():
             continue
         found = [c for c in _CODE.findall(line) if c not in _NOT_CODES]
-        codes.add(found[0] if found else "UNREADABLE")
+        pick = next((c for c in found if known and c in known), found[0] if found else "UNREADABLE")
+        codes.add(pick)
     return codes
 
 
@@ -102,10 +130,17 @@ def _same_fix(cfg: Config, etype: str) -> set[str]:
             and r.get("critical_error") == rule.get("critical_error")}
 
 
-def _pick_error_type(row, lines, cfg: Config, decision: str | None) -> tuple[str, list[str]]:
+def _same_auth(a: str, b: str) -> bool:
+    return (a or "").strip().upper() == (b or "").strip().upper()
+
+
+def _pick_error_type(row, lines: list[str] | None, cfg: Config,
+                     decision: str | None) -> tuple[str, list[str]]:
+    """`lines` is None when the dialog for this visit was never read (not the same as
+    an empty dialog)."""
     notes = []
     code_map = _code_to_type(cfg)
-    codes = blocking_codes(lines)
+    codes = blocking_codes(lines or [], known=set(code_map))
 
     if decision:
         notes.append(f"operator decision: {decision}")
@@ -113,6 +148,8 @@ def _pick_error_type(row, lines, cfg: Config, decision: str | None) -> tuple[str
 
     derived = derive_verification_error(row.get(COL["start_method"]), row.get(COL["end_method"]))
     if derived:
+        if lines is None:
+            notes.append(UNREAD_NOTE)
         ok_types = _same_fix(cfg, derived)
         extra = sorted(c for c in codes if code_map.get(c) not in ok_types)
         if extra:
@@ -121,8 +158,10 @@ def _pick_error_type(row, lines, cfg: Config, decision: str | None) -> tuple[str
         return derived, notes
 
     if not codes:
-        raise Skip("both clock-in and clock-out verified and no readable portal error — "
-                   "open it in the portal", needs_decision=True)
+        why = ("the portal's error dialog wasn't read" if lines is None
+               else "no readable portal error")
+        raise Skip(f"both clock-in and clock-out verified and {why} — open it in the portal",
+                   needs_decision=True)
     unmapped = sorted(c for c in codes if c not in code_map)
     if unmapped:
         raise Skip(f"portal lists {unmapped}, which isn't in rules.yaml yet", needs_decision=True)
@@ -132,7 +171,7 @@ def _pick_error_type(row, lines, cfg: Config, decision: str | None) -> tuple[str
     return types.pop(), notes
 
 
-def compile_visit(row: dict, lines: list[str], cfg: Config, ax: AxisCare,
+def compile_visit(row: dict, lines: list[str] | None, cfg: Config, ax: AxisCare,
                   decision: str | None = None) -> Prepared:
     s, rules = cfg.settings, cfg.rules
     vid = row.get(COL["visit_id"], "")
@@ -148,7 +187,7 @@ def compile_visit(row: dict, lines: list[str], cfg: Config, ax: AxisCare,
     etype, notes = _pick_error_type(row, lines, cfg, decision)
     rule = cfg.error_type(etype)
     if rule is None:
-        raise Skip(f"error type {etype} isn't defined in rules.yaml")
+        raise Skip(f"error type {etype} isn't defined in rules.yaml", needs_decision=True)
     if not rule.get("auto") and not decision:
         raise Skip(f"{etype} ({rule.get('description')}) needs an operator decision",
                    needs_decision=True)
@@ -173,32 +212,43 @@ def compile_visit(row: dict, lines: list[str], cfg: Config, ax: AxisCare,
     except AxisCareError as e:
         raise Skip(f"AxisCare: {e}")
 
+    ambiguous = {str(k): v for k, v in (rules.get("ambiguous_codes") or {}).items()}
     ax_program = (ax_auth.program or "").strip().upper() if ax_auth else ""
     if ax_program:
         if ax_program not in rules["programs"]:
             raise Skip(f"AxisCare lists program '{ax_program}' — the state form has no "
                        "service-code dropdown for it")
         program = ax_program
-    elif proc in (rules.get("ambiguous_codes") or {}):
-        raise Skip(f"procedure code {proc}: {rules['ambiguous_codes'][proc]} "
-                   "(no program found in AxisCare)")
+    elif proc in ambiguous:
+        raise Skip(f"procedure code {proc}: {ambiguous[proc]} (no program found in AxisCare)")
     elif len(programs) > 1:
         raise Skip(f"procedure code {proc} is in several programs {programs}")
     else:
         program = programs[0]
     prog = cfg.program(program)
-    if proc not in {str(k) for k in prog["services"]}:
+    services = {str(k): v for k, v in prog["services"].items()}
+    if proc not in services:
         raise Skip(f"procedure code {proc} isn't a {program} service on the state form")
 
     # --- authorization ---------------------------------------------------------
-    claim_auth = row.get(COL["auth"]) or row.get(COL["auth_override"]) or ""
+    claim_auth = (row.get(COL["auth"]) or "").strip()
+    override = (row.get(COL["auth_override"]) or "").strip()
+    if claim_auth and override and not _same_auth(claim_auth, override):
+        raise Skip("the claim shows both an Authorization Number and a different Manual "
+                   "Override Auth No — check in the portal which one applies", needs_decision=True)
+    claim_auth = claim_auth or override
     require = s.get("axiscare", {}).get("require_auth_confirmation", False)
     if etype == "AUTH":
         if not ax_auth:
-            raise Skip("filing as an authorization exception needs the correct "
-                       "authorization from AxisCare, and none was found")
+            raise Skip("filing as an authorization exception needs the correct authorization "
+                       "from AxisCare, and none was found — fix AxisCare or change the decision",
+                       needs_decision=True)
         auth = ax_auth.number
-    elif ax_auth and claim_auth and ax_auth.number != claim_auth:
+    elif ax_auth and claim_auth and not _same_auth(ax_auth.number, claim_auth):
+        if decision:
+            raise Skip(f"decision {decision} is saved, but the claim's authorization {claim_auth} "
+                       f"still differs from AxisCare's {ax_auth.number} — fix it in AxisCare, or "
+                       "choose AUTH", needs_decision=True)
         raise Skip(f"claim uses authorization {claim_auth} but AxisCare shows "
                    f"{ax_auth.number} for this service on {service_date:%m/%d/%Y} — "
                    "fix it in AxisCare, or file as AUTH", needs_decision=True)
@@ -232,7 +282,12 @@ def compile_visit(row: dict, lines: list[str], cfg: Config, ax: AxisCare,
     caregiver = f"{cg_first} {cg_last}".strip()
     text = " ".join((rule.get("justification") or "").split())
     if text:
-        text = text.format(auth=auth, service_date=f"{service_date:%m/%d/%Y}", caregiver=caregiver)
+        try:
+            text = text.format(auth=auth, service_date=f"{service_date:%m/%d/%Y}",
+                               caregiver=caregiver)
+        except (KeyError, ValueError, IndexError) as e:
+            raise Skip(f"the justification for {etype} in rules.yaml has a bad placeholder "
+                       f"({e}); allowed: {{auth}} {{service_date}} {{caregiver}}")
         if not text.endswith("."):
             text += "."
     if rule.get("signer_must_confirm"):
@@ -240,7 +295,9 @@ def compile_visit(row: dict, lines: list[str], cfg: Config, ax: AxisCare,
 
     reason_code = rule.get("reason_code")
     reason = cfg.reason(reason_code) or {}
-    recipient = f"{row.get(COL['rc_first'], '')} {row.get(COL['rc_last'], '')}".strip().title()
+    # The recipient's name is passed through as the portal spells it; re-casing it
+    # would mangle names like McDonald or de la Cruz.
+    recipient = f"{row.get(COL['rc_first'], '')} {row.get(COL['rc_last'], '')}".strip()
 
     payload = {
         "visitId": vid,
@@ -256,7 +313,7 @@ def compile_visit(row: dict, lines: list[str], cfg: Config, ax: AxisCare,
         "recipientMedicaidId": medicaid,
         "programType": prog.get("form_value", program),
         "serviceCodeDropdown": prog["dropdown"],
-        "serviceCode": prog["services"][proc],
+        "serviceCode": services[proc],
         "serviceAuth": auth,
         "criticalError": rule.get("critical_error"),
         "dateOfService": service_date.isoformat(),
@@ -278,6 +335,9 @@ def compile_visit(row: dict, lines: list[str], cfg: Config, ax: AxisCare,
 def compile_all(rows: list[dict], claim_errors: dict[str, list[str]], cfg: Config,
                 ax: AxisCare, decisions: dict[str, str], submitted: dict[str, str],
                 limit: int | None = None) -> tuple[list[Prepared], list[Held]]:
+    """`claim_errors` maps visit ID -> dialog lines for every visit whose dialog was read
+    (an empty list means the portal showed no errors). A visit missing from it is
+    treated as 'not read'."""
     prepared: list[Prepared] = []
     held: list[Held] = []
     counts = Counter(r.get(COL["visit_id"], "") for r in rows)
@@ -291,24 +351,29 @@ def compile_all(rows: list[dict], claim_errors: dict[str, list[str]], cfg: Confi
         caregiver = f"{row.get(COL['cg_first'], '')} {row.get(COL['cg_last'], '')}".strip()
         prov = cfg.provider_by_medicaid_id(row.get(COL["agency_id"], ""))
         pkey = prov["key"] if prov else ""
+        decision = decisions.get(vid)
 
+        if decision == "SKIP":
+            held.append(Held(vid, "skipped by operator decision", caregiver, pkey))
+            continue
         if counts[vid] > 1:
-            held.append(Held(vid, f"appears {counts[vid]}x in the export (overnight split? "
-                                  "Reason Code 100 territory)", caregiver, pkey, True))
+            if decision:
+                held.append(Held(vid, f"appears {counts[vid]}x in the export; decision {decision} "
+                                      "is saved, but split visits aren't supported yet — choose "
+                                      "Skip, or clear the decision", caregiver, pkey, True))
+            else:
+                held.append(Held(vid, f"appears {counts[vid]}x in the export (overnight split? "
+                                      "Reason Code 100 territory)", caregiver, pkey, True))
             continue
         if vid in submitted:
             held.append(Held(vid, f"already submitted {submitted[vid][:10]} — waiting for "
                                   "the state's response", caregiver, pkey))
             continue
-        decision = decisions.get(vid)
-        if decision == "SKIP":
-            held.append(Held(vid, "skipped by operator decision", caregiver, pkey))
-            continue
         if limit is not None and len(prepared) >= limit:
             held.append(Held(vid, "over the --max limit for this run", caregiver, pkey))
             continue
         try:
-            prepared.append(compile_visit(row, claim_errors.get(vid, []), cfg, ax, decision))
+            prepared.append(compile_visit(row, claim_errors.get(vid), cfg, ax, decision))
         except Skip as e:
             held.append(Held(vid, e.reason, caregiver, pkey, e.needs_decision))
     return prepared, held
@@ -329,4 +394,5 @@ def write_report(prepared: list[Prepared], held: list[Held], path: Path) -> Path
         lines.append("HELD (needs a person):")
         lines.extend("  " + h.line() for h in held)
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    make_private(path)
     return path

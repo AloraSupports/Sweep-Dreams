@@ -1,7 +1,9 @@
 <!doctype html><html><body>
 <!-- A stand-in for the state's Monday.com form, same field IDs. Fake, for tests only. -->
 <div id="start"><button onclick="document.getElementById('start').remove();document.getElementById('f').style.display='block'">Start</button></div>
-<div id="f" style="display:none">
+<!-- A real <form> with a native submit button: pressing Enter in any field would submit it
+     (implicit submission), which the click guard can't see. The filler must never do that. -->
+<form id="f" style="display:none" onsubmit="return false">
 <input id="short_text_mkk9gc42-input" name="short_text_mkk9gc42-input">
 <input id="number_mkk9bpzj-input">
 <input aria-label="Country code" class="combo" data-options="(+1) United States|(+44) United Kingdom">
@@ -13,8 +15,8 @@
 <input aria-label="Program Type" class="combo" data-options="DD|AD|TBI|PAS">
 <input aria-label="HCBS AD Waiver Services Code" class="combo" data-options="Companion - 9510|Personal Care - 5761">
 <input id="short_text_mkn9d2dg-input"><input id="number_mkk9zzbc-input">
-<label><input type="radio" name="radio-group-label__1"> VLOC - Location</label>
-<label><input type="radio" name="radio-group-label__1"> VVER - Verification</label>
+<input type="radio" name="radio-group-label__1" id="ce1"><label for="ce1">VLOC - Location</label>
+<input type="radio" name="radio-group-label__1" id="ce2"><label for="ce2">VVER - Verification</label>
 <input type="date" aria-label="Date of Service">
 <textarea id="long_text_mkk9tj4v-input"></textarea>
 <label><input type="radio" name="radio-group-single_select_mkk96g2w" onchange="document.getElementById('sub').style.display='block'"> Reason Code 140 - No clock</label>
@@ -24,10 +26,10 @@
 <label><input type="radio" name="radio-group-single_select_mkm8p2yf"> B. Something else</label></div>
 <textarea id="long_text_mkm8vb4s-input"></textarea>
 <input id="signature_mkk9sr8h-type-section" oninput="document.getElementById('use').disabled=!this.value">
-<button id="use" disabled onclick="const c=document.querySelector('canvas').getContext('2d');c.fillRect(0,0,20,20)">Use signature</button>
+<button id="use" type="button" disabled onclick="const c=document.querySelector('canvas').getContext('2d');c.fillRect(0,0,20,20)">Use signature</button>
 <canvas width="100" height="40"></canvas>
-<button id="submit" onclick="document.body.innerHTML='<h1>Thank you for submitting!</h1>'">Submit</button>
-</div>
+<button id="submit" type="submit" onclick="document.body.innerHTML='<h1>Thank you for submitting!</h1>'">Submit</button>
+</form>
 <script>
 // Dropdowns: a listbox opens on click (like Monday's), Enter picks the first match, Escape closes.
 document.querySelectorAll('input.combo').forEach(el => {
@@ -57,7 +59,8 @@ new URLSearchParams(location.search).forEach((v, k) => {
   const t = document.getElementById(k + '-input') || document.getElementById(k + '-phone-number-input');
   if (t) { t.value = v; return; }
   document.querySelectorAll('input[type=radio][name="radio-group-' + k + '"]').forEach(r => {
-    if (r.closest('label').innerText.trim().toLowerCase().startsWith(v.toLowerCase())) r.checked = true;
+    const l = r.closest('label') || document.querySelector('label[for="' + r.id + '"]');
+    if (l && l.innerText.trim().toLowerCase().startsWith(v.toLowerCase())) r.checked = true;
   });
 });
 </script></body></html>

@@ -40,7 +40,10 @@ def get(name: str, required: bool = True) -> str | None:
             value = None
     if not value and required:
         label = KNOWN.get(name, (name,))[0]
-        raise MissingCredential(f"{label} is not set. Run: alora-evv credentials set {name}")
+        raise MissingCredential(
+            f"{label} is not set. On a computer: alora-evv credentials set {name}. "
+            f"On a server: set the environment variable ALORA_EVV_{name.upper()} "
+            "(deploy/.env).")
     return value
 
 
@@ -51,7 +54,11 @@ def set_interactive(name: str) -> None:
     value = (getpass.getpass if secret else input)(f"{label}: ").strip()
     if not value:
         raise SystemExit("Nothing entered; not saved.")
-    keyring.set_password(SERVICE, name, value)
+    try:
+        keyring.set_password(SERVICE, name, value)
+    except keyring.errors.KeyringError as e:
+        raise SystemExit(f"No secure store is available on this machine ({e}). On a server, "
+                         f"set the environment variable ALORA_EVV_{name.upper()} instead.")
     print(f"Saved {name} to the system's secure store.")
 
 
@@ -61,6 +68,8 @@ def delete(name: str) -> None:
         print(f"Removed {name}.")
     except keyring.errors.PasswordDeleteError:
         print(f"{name} was not set.")
+    except keyring.errors.KeyringError as e:
+        raise SystemExit(f"No secure store is available on this machine ({e}).")
 
 
 def import_legacy_env() -> None:

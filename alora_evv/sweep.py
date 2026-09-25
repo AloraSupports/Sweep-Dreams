@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
@@ -11,20 +11,22 @@ from playwright.async_api import async_playwright
 
 from . import credentials
 from .axiscare import AxisCareError, open_axiscare
-from .browser import launch
+from .browser import NoBrowser, launch
 from .config import Config
 from .form import fill_form, watch_for_submission
 from .ledger import Ledger
-from .pipeline import compile_all, load_export, write_report
-from .portal import Portal
+from .pipeline import ExportError, compile_all, load_export, write_report
+from .portal import Portal, PortalChanged
 from .paths import sub
+
+SweepStopped = (AxisCareError, ExportError, NoBrowser, PortalChanged, credentials.MissingCredential)
 
 
 async def read_portal(cfg: Config, tmp: Path, archive: bool, show: bool):
     s = cfg.settings
     user = credentials.get("portal_username")
     pwd = credentials.get("portal_password")
-    rows, errors = [], {}
+    rows, errors, warnings = [], {}, []
     async with async_playwright() as pw:
         browser = await launch(pw, headless=not show, channel=s["browser"].get("channel"))
         portal = Portal(browser, s, user, pwd)
@@ -32,8 +34,9 @@ async def read_portal(cfg: Config, tmp: Path, archive: bool, show: bool):
             await portal.open()
             for prov in s["providers"]:
                 await portal.use_provider(prov["portal_menu_match"])
-                path, errs = await portal.harvest(prov["key"], tmp, archived=archive)
+                path, errs, warns = await portal.harvest(prov["key"], tmp, archived=archive)
                 errors.update(errs)
+                warnings.extend(warns)
                 if path:
                     got = load_export(path, s["queue_statuses"])
                     print(f"portal [{prov['key']}]: {len(got)} visits need adjustment")
@@ -41,7 +44,7 @@ async def read_portal(cfg: Config, tmp: Path, archive: bool, show: bool):
         finally:
             await portal.close()
             await browser.close()
-    return rows, errors
+    return rows, errors, warnings
 
 
 async def review(prepared, cfg: Config, parallel: int, sign_name: str, ledger: Ledger):
@@ -94,6 +97,7 @@ class SweepResult:
     report: Path
     started: datetime
     finished: datetime
+    warnings: list = field(default_factory=list)   # things the person should know about the read
 
 
 def collect(cfg: Config, *, from_csv: list[Path] | None = None, archive: bool = False,
@@ -105,13 +109,14 @@ def collect(cfg: Config, *, from_csv: list[Path] | None = None, archive: bool = 
     started = datetime.now()
     ax = open_axiscare(s)  # raises AxisCareError with a clear message
 
+    warnings: list[str] = []
     with tempfile.TemporaryDirectory(prefix="alora_evv_") as tmp:
         if from_csv:
-            rows, errors = [], {}
+            rows, errors = [], {}   # no dialogs were read: the pipeline notes that per visit
             for path in from_csv:
                 rows.extend(load_export(path, s["queue_statuses"]))
         else:
-            rows, errors = asyncio.run(read_portal(cfg, Path(tmp), archive, show_portal))
+            rows, errors, warnings = asyncio.run(read_portal(cfg, Path(tmp), archive, show_portal))
     # The temporary folder (and the downloaded export) is deleted here.
 
     submitted = {} if include_submitted else ledger.recently_submitted(s.get("resubmit_after_days", 30))
@@ -120,7 +125,7 @@ def collect(cfg: Config, *, from_csv: list[Path] | None = None, archive: bool = 
         ledger.record_prepared(p)
     report = write_report(prepared, held, sub("reports") / f"sweep_{started:%Y%m%d_%H%M}.txt")
     queued = len({r.get("Internal Visit ID") for r in rows})
-    return SweepResult(queued, prepared, held, report, started, datetime.now())
+    return SweepResult(queued, prepared, held, report, started, datetime.now(), warnings)
 
 
 def run(cfg: Config, *, from_csv: list[Path] | None, archive: bool, show_portal: bool,
@@ -131,10 +136,12 @@ def run(cfg: Config, *, from_csv: list[Path] | None, archive: bool, show_portal:
     try:
         res = collect(cfg, from_csv=from_csv, archive=archive, show_portal=show_portal,
                       limit=limit, include_submitted=include_submitted, ledger=ledger)
-    except AxisCareError as e:
-        print(f"AxisCare: {e}")
+    except SweepStopped as e:
+        print(f"Sweep stopped: {e}")
         return 2
 
+    for w in res.warnings:
+        print(f"WARNING: {w}")
     print(f"\n{res.queued} visit(s) in the queue: {len(res.prepared)} prepared, {len(res.held)} held.")
     for h in res.held:
         print("  HELD " + h.line())

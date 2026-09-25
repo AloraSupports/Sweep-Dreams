@@ -22,7 +22,7 @@ form already filled, complete the captcha, and submit. Nothing to install.
 2. DNS: add an A record `sweep` → the VM's IP in your domain's DNS (Google Workspace or wherever the domain lives).
 3. Google sign-in: APIs & Services → OAuth consent screen (Internal) → Credentials → OAuth client ID (Web application), authorized redirect URI `https://sweep.alorasupports.com/auth/callback`. Put the ID and secret in `.env`.
 4. On the VM: install Docker, clone the repo, `cp deploy/.env.example deploy/.env`, fill it in, `chmod 600 deploy/.env`, then `cd deploy && docker compose up -d --build`.
-5. Copy the two AxisCare reports into the container's data volume (`docker compose cp caregivers.csv app:/data/axiscare/`), until the AxisCare API backend exists.
+5. Copy the two AxisCare reports into the container's data volume (`docker compose cp caregivers.csv app:/data/axiscare/`; the folder exists from the first start), until the AxisCare API backend exists.
 6. Open the site, sign in, run a sweep with "prepare at most 2".
 
 ## Deploy runbook (exact commands)
@@ -54,18 +54,17 @@ Services → OAuth consent screen → *Internal* → Credentials → Create OAut
 application*, authorized redirect URI `https://sweep.alorasupports.com/auth/callback`.
 Keep the client ID and secret for the `.env` file.
 
-**D. On the VM.** `gcloud compute ssh sweep-vm --zone us-central1-a`, then:
+**D. On the VM.** From your computer, copy the script over and sign in:
 ```
-curl -fsSL https://raw.githubusercontent.com/AloraSupports/Sweep-Dreams/main/deploy/setup-vm.sh -o setup-vm.sh
+gcloud compute scp deploy/setup-vm.sh sweep-vm:~ --zone us-central1-a
+gcloud compute ssh sweep-vm --zone us-central1-a
 bash setup-vm.sh
 ```
-(The raw URL needs the repo to be public or a token; for a private repo, paste the file
-over with `gcloud compute scp deploy/setup-vm.sh sweep-vm:~ --zone us-central1-a`.)
-The script installs Docker, makes a read-only deploy key for the private repo, clones,
-creates `deploy/.env`, and probes whether the VM can reach the portal and the state form.
-Then:
+The script installs Docker, makes a read-only deploy key for the private repo (it pauses
+while you add the key in GitHub), clones, creates `deploy/.env`, and probes whether the
+VM can reach the portal and the state form. Then:
 ```
-nano ~/sweep/deploy/.env            # fill every line; the session secret is any long random string
+nano ~/sweep/deploy/.env            # fill every line, keeping the quotes; the session secret is any long random string
 cd ~/sweep/deploy && docker compose up -d --build
 docker compose logs -f app          # watch the first start
 docker compose cp caregivers.csv app:/data/axiscare/
@@ -77,8 +76,21 @@ a sweep with "prepare at most 1". The first sweep is the cloud-IP portal login t
 
 **Updating later:** `cd ~/sweep && git pull && cd deploy && docker compose up -d --build`.
 
-**Backups:** the only state is the `data` volume (ledger, portal session, AxisCare CSVs).
-`docker run --rm -v deploy_data:/data -v $PWD:/out debian tar czf /out/data.tgz /data`.
+**Backups:** the only state is the `data` volume: the ledger (visit IDs and statuses),
+the AxisCare reports (client Medicaid IDs) and the saved portal login. The ledger is the
+only part worth keeping; the reports come from AxisCare and the login is re-created.
+Encrypt the archive and leave nothing readable on the host:
+```
+umask 077
+docker run --rm -v deploy_data:/data -v "$PWD":/out debian \
+  tar czf /out/ledger.tgz -C /data ledger.sqlite3
+gpg -c ledger.tgz && shred -u ledger.tgz        # keep ledger.tgz.gpg somewhere safe
+```
+
+**Hardening left for later:** the app container runs as root (the Playwright base image
+has a `pwuser` account; switching needs a `chown` of `/data` and a test build), and the
+saved portal login can be turned off with `portal.save_session: false` in settings.yaml
+if a fresh login per sweep is preferred over a token on the volume.
 
 ## Known risks to test early
 

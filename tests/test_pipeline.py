@@ -104,3 +104,124 @@ def test_compile_all_duplicates_submitted_and_report(cfg, fake_ax, export_rows, 
     report = write_report(prepared, held, tmp_path / "r.txt").read_text()
     for secret in ("Fake", "Client", "11111111111", "22222222222"):
         assert secret not in report  # no client names or Medicaid IDs on disk
+
+
+# --- decisions, limits and dialogs ---------------------------------------------
+
+def test_known_decision_leaves_choices_to_the_signer(cfg, fake_ax, export_rows):
+    from alora_evv.form import prefill_params
+    p = compile_visit(by_id(export_rows, "1000000001"), [], cfg, fake_ax, decision="KNOWN")
+    assert p.payload["criticalError"] is None and p.payload["reasonCode"] is None
+    assert p.payload["justification"] == ""
+    sent = {col for col, _ in prefill_params(p.payload, cfg.form).values()}
+    assert "label__1" not in sent and "single_select_mkk96g2w" not in sent
+
+
+def test_auth_decision_without_axiscare_auth_stays_decidable(cfg, export_rows):
+    ax = FakeAxisCare(npis={"Test Caregiver": "1234567893"})
+    with pytest.raises(Skip) as e:
+        compile_visit(by_id(export_rows, "1000000001"), [], cfg, ax, decision="AUTH")
+    assert e.value.needs_decision and "change the decision" in e.value.reason
+
+
+def test_non_auth_decision_does_not_hide_a_mismatch(cfg, fake_ax, export_rows):
+    with pytest.raises(Skip) as e:
+        compile_visit(by_id(export_rows, "1000000003"), [], cfg, fake_ax, decision="KNOWN")
+    assert e.value.needs_decision and "decision KNOWN" in e.value.reason
+
+
+def test_limit_and_skip_on_duplicates(cfg, fake_ax, export_rows):
+    prepared, held = compile_all(export_rows, {}, cfg, fake_ax, {}, {}, limit=1)
+    assert len(prepared) == 1
+    assert any("--max limit" in h.reason for h in held)
+
+    _, held = compile_all(export_rows, {}, cfg, fake_ax, {"1000000005": "SKIP"}, {})
+    reasons = {h.visit_id: h for h in held}
+    assert reasons["1000000005"].reason == "skipped by operator decision"
+
+    _, held = compile_all(export_rows, {}, cfg, fake_ax, {"1000000005": "VVER"}, {})
+    reasons = {h.visit_id: h for h in held}
+    assert "split visits aren't supported" in reasons["1000000005"].reason
+    assert reasons["1000000005"].needs_decision
+
+
+def test_non_critical_rows_do_not_block_and_known_code_wins():
+    assert blocking_codes(["VTIM Non-Critical Late clock-in", "VVER Critical Missing clock out"]) == {"VVER"}
+    assert blocking_codes(["ABC VLOC CRITICAL something"], known={"VLOC"}) == {"VLOC"}
+    assert blocking_codes(["ABC VLOC CRITICAL something"]) == {"ABC"}
+
+
+def test_unread_dialog_is_not_no_errors(cfg, fake_ax, export_rows):
+    from alora_evv.pipeline import UNREAD_NOTE
+    p = compile_visit(by_id(export_rows, "1000000001"), None, cfg, fake_ax)
+    assert UNREAD_NOTE in p.notes
+    assert UNREAD_NOTE not in compile_visit(by_id(export_rows, "1000000001"), [], cfg, fake_ax).notes
+    with pytest.raises(Skip, match="wasn't read"):
+        compile_visit(by_id(export_rows, "1000000002"), None, cfg, fake_ax)
+    # compile_all treats a visit missing from claim_errors as unread
+    prepared, _ = compile_all(export_rows, {"1000000001": []}, cfg, fake_ax, {}, {})
+    notes = {p.visit_id: p.notes for p in prepared}
+    assert UNREAD_NOTE not in notes["1000000001"]
+
+
+def test_bad_justification_placeholder_holds_instead_of_crashing(cfg, fake_ax, export_rows):
+    cfg.rules["error_types"]["VVER"]["justification"] = "Visit for {client} on {service_date}"
+    with pytest.raises(Skip, match="bad placeholder"):
+        compile_visit(by_id(export_rows, "1000000001"), [], cfg, fake_ax)
+
+
+def test_manual_override_auth(cfg, fake_ax, export_rows):
+    row = dict(by_id(export_rows, "1000000001"), **{"Manual Override Auth No": "AUTH111"})
+    assert compile_visit(row, [], cfg, fake_ax).payload["serviceAuth"] == "AUTH111"
+    row["Manual Override Auth No"] = "OTHER1"
+    with pytest.raises(Skip, match="Manual Override") as e:
+        compile_visit(row, [], cfg, fake_ax)
+    assert e.value.needs_decision
+    row["Authorization Number"] = ""
+    row["Manual Override Auth No"] = "AUTH111"
+    assert compile_visit(row, [], cfg, fake_ax).payload["serviceAuth"] == "AUTH111"
+
+
+def test_recipient_name_is_not_recased(cfg, fake_ax, export_rows):
+    row = dict(by_id(export_rows, "1000000001"), **{"Recipient Name": "FAKE", "Recipient Last Name": "MCDONALD"})
+    assert compile_visit(row, [], cfg, fake_ax).payload["recipientName"] == "FAKE MCDONALD"
+
+
+# --- export file -----------------------------------------------------------------
+
+def test_load_export_tolerates_extra_fields_and_explains_missing_columns(tmp_path, cfg):
+    from alora_evv.pipeline import ExportError, load_export
+    from tests.conftest import ROOT
+    src = (ROOT / "tests" / "fixtures" / "portal_export_fake.csv").read_text()
+    lines = src.splitlines()
+    lines[1] += ",surplus,fields"
+    (tmp_path / "e.csv").write_text("\n".join(lines) + "\n")
+    rows = load_export(tmp_path / "e.csv", cfg.settings["queue_statuses"])
+    assert rows[0]["Internal Visit ID"] == "1000000001"
+
+    (tmp_path / "bad.csv").write_text(src.replace("Status", "Claim Status"))
+    with pytest.raises(ExportError, match="Columns found"):
+        load_export(tmp_path / "bad.csv", cfg.settings["queue_statuses"])
+
+
+def test_unquoted_numeric_keys_are_normalised():
+    from alora_evv.config import _string_keys
+    rules = _string_keys({"programs": {"AD": {"services": {5761: "Personal Care - 5761"}}},
+                          "ambiguous_codes": {7494: "x"}, "reason_codes": {140: {"label": "R"}}})
+    assert list(rules["programs"]["AD"]["services"]) == ["5761"]
+    assert list(rules["ambiguous_codes"]) == ["7494"] and list(rules["reason_codes"]) == ["140"]
+
+
+# --- prefilled link ---------------------------------------------------------------
+
+def test_prefill_keeps_client_details_out_of_the_url(cfg, fake_ax, export_rows):
+    from alora_evv.form import prefill_params, prefill_url
+    p = compile_visit(by_id(export_rows, "1000000001"), [], cfg, fake_ax)
+    url = prefill_url(p.payload, cfg.form)
+    assert "Fake" not in url and "11111111111" not in url and "number_mkk9zzbc=1000000001" in url
+    assert "11111111111" in prefill_url(p.payload, cfg.form, include_phi=True)
+    # the follow-up answer goes to the reason's own sub_group column
+    assert prefill_params(p.payload, cfg.form)["reasonSubOption"][0] == "single_select_mkm8p2yf"
+    cfg.rules["reason_codes"]["140"]["sub_group"] = "single_select_other"
+    p2 = compile_visit(by_id(export_rows, "1000000001"), [], cfg, fake_ax)
+    assert prefill_params(p2.payload, cfg.form)["reasonSubOption"][0] == "single_select_other"

@@ -85,6 +85,14 @@ class ExportBackend(AxisCare):
                     self._npi[key].append(r["npi"])
         self._auths = self._read(self.cfg["authorizations_file"],
                                  self.cfg["authorization_columns"], {"program"})
+        for n, r in enumerate(self._auths, start=2):  # row 1 is the header
+            for col in ("start_date", "end_date"):
+                if r[col] and not parse_date(r[col], self.formats):
+                    raise AxisCareError(
+                        f"{self.cfg['authorizations_file']} row {n}: can't read the date "
+                        f"'{r[col]}' — add its format to axiscare.export.date_formats in "
+                        "settings.yaml. (An unreadable date would otherwise make that "
+                        "authorization look valid forever.)")
 
     def caregiver_npi(self, first: str, last: str) -> str | None:
         found = self._npi.get(norm_name(first) + "|" + norm_name(last), [])
