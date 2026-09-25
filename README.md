@@ -91,6 +91,8 @@ setup checklist; `deploy/` has the Docker files. To try it locally without sign-
 pip install -e ".[web]"
 uvicorn --factory alora_evv.web.app:create_app --reload
 ```
+The Docker image sets `ALORA_EVV_WEB_AUTH=google`, which overrides the file, so a
+settings file left on `none` can't switch sign-in off on the server.
 
 ## Reading the state form (one-time, before the first live run)
 
@@ -119,10 +121,15 @@ form, update the field IDs in `config/state_form.yaml`.
 
 - Client names and Medicaid IDs exist only in memory while forms are filled. The portal
   export is downloaded to a temporary folder and deleted after each run. No screenshots.
+- The web version's "Open the state form" link carries the visit's values in its web
+  address, except the client's name and Medicaid ID, which the reviewer copies from the
+  review page (a web address ends up in browser history; typed values don't). Set
+  `web.prefill_phi: true` in `settings.yaml` to include them anyway.
 - The data folder (ledger, portal session, AxisCare reports) lives outside the code
-  folder, with owner-only permissions on Mac.
+  folder, with owner-only permissions on Mac and Linux.
 - The saved portal session lets the next run skip logging in. Delete
-  `portal_session*.json` in the data folder to force a fresh login.
+  `portal_session*.json` in the data folder to force a fresh login, or set
+  `portal.save_session: false` to log in every run and keep no login token on disk.
 
 ## Roadmap
 

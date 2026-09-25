@@ -5,6 +5,8 @@ its sister agency First Choice. It handles PHI, so these rules are fixed:
 
 - **Never add code that clicks Submit** (or Sign, Save as draft) on the state form, or
   that changes records in the Mobile Caregiver+ portal. The guard in `browser.py` stays.
+  Never press Enter inside a form field either (a browser submits a `<form>` on Enter,
+  and no guard sees that): pick dropdown options by clicking them through `safe_click`.
 - **No real visit data in the repo or in this conversation.** Tests use the fake data in
   `tests/fixtures/`. Real exports, AxisCare reports, the ledger and sessions live in the
   per-user data folder (`alora-evv where`), which is outside the repo. Don't read files
@@ -17,5 +19,7 @@ its sister agency First Choice. It handles PHI, so these rules are fixed:
 - Run `pytest` and `pyflakes alora_evv tests` after every change. Must work on Mac and Windows:
   use `pathlib`, no shell-specific commands, no hard-coded paths.
 - The web version (`alora_evv/web`) must keep Google sign-in on in production
-  (`web.auth: google`); `none` is for local testing only. Pages that show visit data
-  send `Cache-Control: no-store`.
+  (`web.auth: google`); `none` is for local testing only, and `deploy/Dockerfile` pins
+  `ALORA_EVV_WEB_AUTH=google` so the server can't run without it. Pages that show visit
+  data send `Cache-Control: no-store`. The prefilled state-form link leaves client name
+  and Medicaid ID out unless `web.prefill_phi` is true.
