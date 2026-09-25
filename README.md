@@ -92,6 +92,22 @@ pip install -e ".[web]"
 uvicorn --factory alora_evv.web.app:create_app --reload
 ```
 
+## Reading the state form (one-time, before the first live run)
+
+Two commands open the state form in a visible browser, read it, and **never submit**:
+```
+alora-evv form inspect          # every field, dropdown option, radio label, and what
+                                # follow-up question each Reason Code reveals
+alora-evv form prefill-test     # opens the form with obviously fake values in the URL
+                                # and reports which fields actually prefilled
+```
+Use the first to fill in the TODOs in `config/rules.yaml` (exact Program Type, Critical
+Error and Reason Code texts, and each reason's follow-up). Use the second to fix
+`prefill_columns` in `config/state_form.yaml`: it prints a ready-to-paste block of the
+column IDs that worked. Add `--out report.json` to keep the result, `--headless` to hide
+the browser. If nothing prefills, the web version needs the Chrome extension from the
+roadmap.
+
 ## Adding rules and codes
 
 Most changes are edits to `config/rules.yaml`: new portal error codes, new error types

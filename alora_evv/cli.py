@@ -6,6 +6,8 @@
   alora-evv sweep --from-csv export.csv          same, from an export file (no portal login)
   alora-evv decide 1234567890 AUTH               tell the app how to handle a held visit
   alora-evv ledger                               recent prepared / submitted visits
+  alora-evv form inspect                         read the state form's fields and options (never submits)
+  alora-evv form prefill-test                    check which fields the state form prefills from the URL
 """
 from __future__ import annotations
 
@@ -88,6 +90,13 @@ def cmd_decide(args) -> int:
     return 0
 
 
+def cmd_form(args) -> int:
+    import asyncio
+    from .forminspect import run
+    asyncio.run(run(args.action, load_config(), headless=args.headless, out=args.out, url=args.url))
+    return 0
+
+
 def cmd_ledger(args) -> int:
     for r in Ledger().recent(args.limit):
         sub = f"submitted {r['submitted_at'][:16]}" if r["submitted_at"] else f"prepared {r['prepared_at'][:16]}"
@@ -136,6 +145,13 @@ def main(argv: list[str] | None = None) -> None:
     d.add_argument("--note")
     d.add_argument("--clear", action="store_true")
     d.set_defaults(func=cmd_decide)
+
+    fm = sp.add_parser("form", help="read the state form's fields, or test URL prefill (never submits)")
+    fm.add_argument("action", choices=["inspect", "prefill-test"])
+    fm.add_argument("--headless", action="store_true", help="don't show the browser window")
+    fm.add_argument("--out", metavar="FILE", help="also save the report as JSON")
+    fm.add_argument("--url", help="use a different form URL (default: state_form.yaml url)")
+    fm.set_defaults(func=cmd_form)
 
     lg = sp.add_parser("ledger", help="recent prepared / submitted visits")
     lg.add_argument("--limit", type=int, default=30)

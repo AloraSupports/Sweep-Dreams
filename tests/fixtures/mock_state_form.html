@@ -29,11 +29,35 @@
 <button id="submit" onclick="document.body.innerHTML='<h1>Thank you for submitting!</h1>'">Submit</button>
 </div>
 <script>
-document.querySelectorAll('input.combo').forEach(el => el.addEventListener('keydown', e => {
-  if (e.key === 'Enter') {
-    const opts = el.dataset.options.split('|');
-    const hit = opts.find(o => o.toLowerCase().includes(el.value.toLowerCase()));
-    if (hit) el.value = hit;
-  }
-}));
+// Dropdowns: a listbox opens on click (like Monday's), Enter picks the first match, Escape closes.
+document.querySelectorAll('input.combo').forEach(el => {
+  el.setAttribute('role', 'combobox');
+  el.addEventListener('click', () => {
+    if (el.nextElementSibling && el.nextElementSibling.getAttribute('role') === 'listbox') return;
+    const box = document.createElement('div'); box.setAttribute('role', 'listbox');
+    el.dataset.options.split('|').forEach(o => {
+      const d = document.createElement('div'); d.setAttribute('role', 'option'); d.textContent = o;
+      d.onclick = () => { el.value = o; box.remove(); }; box.appendChild(d);
+    });
+    el.after(box);
+  });
+  el.addEventListener('keydown', e => {
+    if (e.key === 'Enter') {
+      const opts = el.dataset.options.split('|');
+      const hit = opts.find(o => o.toLowerCase().includes(el.value.toLowerCase()));
+      if (hit) el.value = hit;
+    }
+    if (e.key === 'Enter' || e.key === 'Escape') {
+      const b = el.nextElementSibling; if (b && b.getAttribute('role') === 'listbox') b.remove();
+    }
+  });
+});
+// URL prefill (?column_id=value): text fields by id, radio groups by label prefix. Dropdowns don't prefill here.
+new URLSearchParams(location.search).forEach((v, k) => {
+  const t = document.getElementById(k + '-input') || document.getElementById(k + '-phone-number-input');
+  if (t) { t.value = v; return; }
+  document.querySelectorAll('input[type=radio][name="radio-group-' + k + '"]').forEach(r => {
+    if (r.closest('label').innerText.trim().toLowerCase().startsWith(v.toLowerCase())) r.checked = true;
+  });
+});
 </script></body></html>
