@@ -148,9 +148,13 @@ def run(cfg: Config, *, from_csv: list[Path] | None, archive: bool, show_portal:
     print(f"Report: {res.report}")
 
     if do_review and res.prepared:
-        asyncio.run(review(res.prepared, cfg, parallel or s["browser"].get("parallel_tabs", 4),
-                           s.get("signer_name", "") if sign_name is None else sign_name,
-                           ledger))
+        try:
+            asyncio.run(review(res.prepared, cfg, parallel or s["browser"].get("parallel_tabs", 4),
+                               s.get("signer_name", "") if sign_name is None else sign_name,
+                               ledger))
+        except NoBrowser as e:
+            print(f"Review stopped: {e}")
+            return 2
     elif do_review:
         print("Nothing to review.")
     return 0
