@@ -1,0 +1,74 @@
+# Alora EVV — non-secret settings.
+# Passwords and API tokens NEVER go in this file. Store them with:
+#   alora-evv credentials set <name>
+
+payer_id: NDHH
+
+portal:
+  login_url: https://evv-dashboard.mobilecaregiverplus.com/auth/login
+  # {archived} is filled with true/false
+  worklist_url: https://evv-dashboard.mobilecaregiverplus.com/provider/worklist/claims/list?payerId=NDHH&archived={archived}&page=0&size=100
+  origin: https://evv-dashboard.mobilecaregiverplus.com
+
+# Portal claim statuses that count as "needs an adjustment".
+queue_statuses: [REJECTED, UNMATCHED, DENIED]
+
+# Provider agencies. The portal export's "Provider Agency Medicaid ID" picks the row.
+providers:
+  - key: alora
+    portal_menu_match: ALORA          # text to find in the portal's provider switcher
+    medicaid_id: "65898714"
+    name: Alora Supports NE LLC
+    phone: "8455059546"
+    email: eliyahu@alorasupports.com
+  - key: firstchoice
+    portal_menu_match: FIRST CHO
+    medicaid_id: "04363962"
+    name: FIRST CHOICE DEVELOPMENTAL DISABILITY SERVICES LLC
+    phone: "8455059546"
+    email: eliyahu@alorasupports.com
+
+signer_name: Eli Kretchmer            # typed into the form's signature box ("" = leave unsigned)
+evv_vendor: Axiscare
+default_ticket_number: "0"
+
+browser:
+  # "chrome" uses the Google Chrome already installed on this computer (no 700 MB download).
+  # Set to "" to use Playwright's own Chromium instead (run: playwright install chromium).
+  channel: chrome
+  parallel_tabs: 4
+
+# Skip visits already submitted within this many days (prevents duplicate submissions).
+resubmit_after_days: 30
+
+axiscare:
+  # "export" = read AxisCare report exports you download (works today, no API needed).
+  # "api"    = AxisCare API (fill in axiscare.py once AxisCare provides API docs).
+  backend: export
+  # If true, a visit is held back when its authorization can't be confirmed in AxisCare.
+  require_auth_confirmation: false
+  export:
+    # Drop the downloaded reports in the app's data folder (run `alora-evv where`),
+    # inside an "axiscare" subfolder. Then set the column names to match the real reports.
+    caregivers_file: caregivers.csv
+    caregiver_columns:
+      first_name: First Name
+      last_name: Last Name
+      npi: NPI
+    authorizations_file: authorizations.csv
+    authorization_columns:
+      client_medicaid_id: Medicaid ID
+      service_code: Service Code
+      auth_number: Authorization Number
+      start_date: Start Date
+      end_date: End Date
+      program: Program              # optional; leave as-is if the report has no such column
+    date_formats: ["%m/%d/%Y", "%Y-%m-%d"]
+
+web:
+  app_name: Alora Sweep
+  # google = sign in with an alorasupports.com Google account (password + Google 2-step
+  #          verification apply). Required in production.
+  # none   = no sign-in. Local testing only. Never use on a server.
+  auth: google
+  allowed_domain: alorasupports.com

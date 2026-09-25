@@ -216,3 +216,12 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# --- Alora EVV: never commit visit data, sessions or secrets ---
+*.csv
+!tests/fixtures/*.csv
+*.xlsx
+*.sqlite3
+portal_session*.json
+reports/
+*.pem

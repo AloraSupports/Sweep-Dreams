@@ -1,0 +1,59 @@
+# The state's EVV Adjustment Request form (a public Monday.com form).
+# If the state edits their form and a run reports "field not found", update the IDs here.
+url: https://forms.monday.com/forms/15585fdef9687bbbe1e9585533ec9c61
+
+# Text/number inputs, matched by name= or id=
+text_fields:
+  providerName:        short_text_mkk9gc42-input
+  providerMedicaidId:  number_mkk9bpzj-input
+  providerPhone:       phone__1-phone-number-input
+  ticketNumber:        number_mkk9t5vj-input
+  caregiverName:       short_text_mkk9sdt3-input
+  caregiverNpi:        number65i2memq-input
+  recipientName:       short_text_mkk92zny-input
+  recipientMedicaidId: numbers4__1-input
+  serviceAuth:         short_text_mkn9d2dg-input
+  visitId:             number_mkk9zzbc-input
+  justification:       long_text_mkk9tj4v-input
+  reasonFreeText:      long_text_mkm8vb4s-input
+
+# Dropdowns, matched by the input's aria-label
+dropdowns:
+  phoneCountry: {label: Country code, value: (+1) United States}
+  evvVendor:    {label: EVV Vendor}
+  programType:  {label: Program Type}
+  # the service-code dropdown's label comes from rules.yaml -> programs.<X>.dropdown
+
+# Radio groups, matched by name=
+radio_groups:
+  criticalError: radio-group-label__1
+  reasonCode:    radio-group-single_select_mkk96g2w
+
+email_selector: input[type=email]
+date_selector: input[type=date][aria-label="Date of Service"]
+first_field_id: short_text_mkk9gc42-input
+signature_input: "#signature_mkk9sr8h-type-section"
+
+# Fields re-read after filling to confirm they stuck
+verify_fields: [providerName, caregiverNpi, recipientMedicaidId, visitId]
+
+# --- URL prefill (EXPERIMENTAL — confirm with a live test) -------------------------
+# Monday forms can often be prefilled with ?column_id=value in the URL. Column IDs are
+# the field IDs above without the "-input" suffix (radio groups without "radio-group-").
+# Keys are payload fields; values are column IDs. Add the ones the live test confirms.
+prefill_columns:
+  providerName:        short_text_mkk9gc42
+  providerMedicaidId:  number_mkk9bpzj
+  ticketNumber:        number_mkk9t5vj
+  caregiverName:       short_text_mkk9sdt3
+  caregiverNpi:        number65i2memq
+  recipientName:       short_text_mkk92zny
+  recipientMedicaidId: numbers4__1
+  serviceAuth:         short_text_mkn9d2dg
+  visitId:             number_mkk9zzbc
+  justification:       long_text_mkk9tj4v
+  criticalError:       label__1
+  reasonCode:          single_select_mkk96g2w
+  reasonSubOption:     single_select_mkm8p2yf
+  # TODO after the live test: providerPhone, providerEmail, evvVendor, programType,
+  # serviceCode, dateOfService (their column IDs aren't visible in the page's field IDs)

@@ -1,0 +1,39 @@
+<!doctype html><html><body>
+<!-- A stand-in for the state's Monday.com form, same field IDs. Fake, for tests only. -->
+<div id="start"><button onclick="document.getElementById('start').remove();document.getElementById('f').style.display='block'">Start</button></div>
+<div id="f" style="display:none">
+<input id="short_text_mkk9gc42-input" name="short_text_mkk9gc42-input">
+<input id="number_mkk9bpzj-input">
+<input aria-label="Country code" class="combo" data-options="(+1) United States|(+44) United Kingdom">
+<input id="phone__1-phone-number-input">
+<input type="email">
+<input aria-label="EVV Vendor" class="combo" data-options="Axiscare|Other">
+<input id="number_mkk9t5vj-input"><input id="short_text_mkk9sdt3-input"><input id="number65i2memq-input">
+<input id="short_text_mkk92zny-input"><input id="numbers4__1-input">
+<input aria-label="Program Type" class="combo" data-options="DD|AD|TBI|PAS">
+<input aria-label="HCBS AD Waiver Services Code" class="combo" data-options="Companion - 9510|Personal Care - 5761">
+<input id="short_text_mkn9d2dg-input"><input id="number_mkk9zzbc-input">
+<label><input type="radio" name="radio-group-label__1"> VLOC - Location</label>
+<label><input type="radio" name="radio-group-label__1"> VVER - Verification</label>
+<input type="date" aria-label="Date of Service">
+<textarea id="long_text_mkk9tj4v-input"></textarea>
+<label><input type="radio" name="radio-group-single_select_mkk96g2w" onchange="document.getElementById('sub').style.display='block'"> Reason Code 140 - No clock</label>
+<label><input type="radio" name="radio-group-single_select_mkk96g2w"> Reason Code 150 - Location</label>
+<div id="sub" style="display:none">
+<label><input type="radio" name="radio-group-single_select_mkm8p2yf"> A. Failure to Clock In, Clock Out or Both</label>
+<label><input type="radio" name="radio-group-single_select_mkm8p2yf"> B. Something else</label></div>
+<textarea id="long_text_mkm8vb4s-input"></textarea>
+<input id="signature_mkk9sr8h-type-section" oninput="document.getElementById('use').disabled=!this.value">
+<button id="use" disabled onclick="const c=document.querySelector('canvas').getContext('2d');c.fillRect(0,0,20,20)">Use signature</button>
+<canvas width="100" height="40"></canvas>
+<button id="submit" onclick="document.body.innerHTML='<h1>Thank you for submitting!</h1>'">Submit</button>
+</div>
+<script>
+document.querySelectorAll('input.combo').forEach(el => el.addEventListener('keydown', e => {
+  if (e.key === 'Enter') {
+    const opts = el.dataset.options.split('|');
+    const hit = opts.find(o => o.toLowerCase().includes(el.value.toLowerCase()));
+    if (hit) el.value = hit;
+  }
+}));
+</script></body></html>

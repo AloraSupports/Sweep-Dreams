@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% block content %}
+{% if flash %}<p class="flash">{{ flash }}</p>{% endif %}
+
+{% set r = state.result %}
+{% if state.running %}
+  <h1>Sweeping the portal now. This takes a couple of minutes.</h1>
+  <p class="quiet">Started {{ state.started.strftime('%-I:%M %p') }}. Refresh this page to see the results.</p>
+  <meta http-equiv="refresh" content="15">
+{% elif state.error %}
+  <h1>The last sweep stopped early.</h1>
+  <p class="flash">{{ state.error }}</p>
+{% elif r %}
+  <h1>{{ r.queued }} visit{{ '' if r.queued == 1 else 's' }} need adjustment:
+      {{ r.prepared|length }} ready to submit, {{ r.held|length }} held for a person.</h1>
+  <p class="quiet">Swept {{ r.finished.strftime('%A %-I:%M %p') }}. Report saved as {{ r.report.name }}.</p>
+{% else %}
+  <h1>No sweep yet today.</h1>
+  <p class="quiet">Run one to pull the queue from Mobile Caregiver+ and check it against AxisCare.</p>
+{% endif %}
+
+<form method="post" action="/sweep" class="runbar">
+  <button class="primary" type="submit" {% if state.running %}disabled{% endif %}>Run sweep</button>
+  <label>Prepare at most <input type="number" name="limit" min="1" placeholder="all"> forms</label>
+  <label><input type="checkbox" name="include_submitted" value="1"> include visits already submitted</label>
+</form>
+
+{% if r and r.prepared %}
+<h2>Ready to submit</h2>
+{% set submitted = ledger.recently_submitted(365) %}
+<table>
+  <tr><th>Visit</th><th>Agency</th><th>Service date</th><th>Error</th><th>Reason</th><th>Caregiver</th><th></th></tr>
+  {% for p in r.prepared %}
+  <tr {% if p.visit_id in submitted %}class="done"{% endif %}>
+    <td>{{ p.visit_id }}</td>
+    <td>{{ p.provider_key }}</td>
+    <td>{{ p.service_date.strftime('%m/%d/%Y') }}</td>
+    <td>{{ p.error_type }}</td>
+    <td>{{ p.reason_code or '—' }}</td>
+    <td>{{ p.caregiver }}{% if p.notes %}<div class="note">{{ p.notes|join('; ') }}</div>{% endif %}</td>
+    <td>{% if p.visit_id in submitted %}Submitted{% else %}<a href="/visit/{{ p.visit_id }}">Review</a>{% endif %}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% endif %}
+
+{% if r and r.held %}
+<h2>Held for a person</h2>
+<ul class="held" style="list-style:none;padding:0;margin:0">
+  {% for h in r.held %}
+  <li>
+    <strong>Visit {{ h.visit_id }}</strong>{% if h.caregiver %} · {{ h.caregiver }}{% endif %} — {{ h.reason }}
+    {% if h.needs_decision %}
+    <form method="post" action="/visit/{{ h.visit_id }}/decide" class="inline">
+      <select name="choice">
+        <option value="">Handle as…</option>
+        <option value="AUTH">Authorization exception (120)</option>
+        <option value="VVER">Missing clock-out (VVER)</option>
+        <option value="VSTR">Missing clock-in (VSTR)</option>
+        <option value="VLOC">Wrong location (VLOC)</option>
+        <option value="KNOWN">Fill known info only</option>
+        <option value="SKIP">Skip</option>
+        <option value="CLEAR">Clear decision</option>
+      </select>
+      <button type="submit">Save</button>
+    </form>
+    {% endif %}
+  </li>
+  {% endfor %}
+</ul>
+<p class="note">Decisions apply on the next sweep.</p>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block content %}
+{% set pl = p.payload %}
+<p><a href="/">← All visits</a></p>
+<h1>Visit {{ p.visit_id }}: {{ p.error_type }}, reason code {{ p.reason_code or 'for you to choose' }}.</h1>
+{% if p.notes %}<p class="flash">{{ p.notes|join('. ') }}.</p>{% endif %}
+
+<div class="actions">
+  <a class="btn primary" href="{{ form_url }}" target="_blank" rel="noopener">Open the state form</a>
+  <form method="post" action="/visit/{{ p.visit_id }}/submitted" class="inline">
+    <button type="submit">I submitted it</button>
+  </form>
+  <span class="quiet">The form opens in a new tab with the fields below filled where the state's form allows it. Check every field, sign as {{ signer or 'yourself' }}, complete the captcha, and click Submit there.</span>
+</div>
+
+<h2>Values to check against the form</h2>
+<dl class="fields">
+  <dt>Provider</dt><dd>{{ pl.providerName }} (Medicaid ID {{ pl.providerMedicaidId }})</dd>
+  <dt>Phone / email</dt><dd>{{ pl.providerPhone }} · {{ pl.providerEmail }}</dd>
+  <dt>EVV vendor / ticket</dt><dd>{{ pl.evvVendor }} · {{ pl.ticketNumber }}</dd>
+  <dt>Caregiver</dt><dd>{{ pl.caregiverName }}, NPI {{ pl.caregiverNpi }}</dd>
+  <dt>Recipient</dt><dd>{{ pl.recipientName }}, Medicaid ID {{ pl.recipientMedicaidId }}</dd>
+  <dt>Program / service</dt><dd>{{ pl.programType }} · {{ pl.serviceCode }}</dd>
+  <dt>Service authorization</dt><dd>{{ pl.serviceAuth }}</dd>
+  <dt>Visit ID</dt><dd>{{ pl.visitId }}</dd>
+  <dt>Critical error</dt><dd>{{ pl.criticalError or 'choose on the form' }}</dd>
+  <dt>Date of service</dt><dd>{{ pl.dateOfService }}</dd>
+  <dt>Justification</dt><dd>{{ pl.justification or '—' }}</dd>
+  <dt>Reason code</dt><dd>{{ pl.reasonCode or 'choose on the form' }}{% if pl.reasonSubOption %} → {{ pl.reasonSubOption }}{% endif %}</dd>
+</dl>
+{% endblock %}

@@ -1,0 +1,7 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>Sign in to review today's EVV adjustments.</h1>
+{% if error %}<p class="flash">{{ error }}</p>{% endif %}
+<p class="quiet">Use your @{{ domain }} Google account. Your Google password and 2-step verification apply.</p>
+<p><a class="btn primary" href="/login/google">Sign in with Google</a></p>
+{% endblock %}

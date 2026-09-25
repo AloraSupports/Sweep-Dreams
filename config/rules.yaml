@@ -1,0 +1,148 @@
+# Alora EVV — rules table.
+# This is the file to grow as you add codes and situations. No code changes needed for:
+#   - a new portal error code that maps to an existing kind of fix (add it to portal_codes)
+#   - a new error type with its own critical error / reason code / justification
+#   - new service codes or programs
+# Items marked TODO need confirming against the state's form or guidance.
+
+# ---------------------------------------------------------------------------
+# Error types. Each says how to fill the form for that kind of problem.
+#   critical_error: which "Critical Error" radio to pick (null = leave for the signer)
+#   reason_code:    key into reason_codes below (null = leave for the signer)
+#   auto:           true  = prepared automatically when detected
+#                   false = only prepared after an operator runs `alora-evv decide`
+#   portal_codes:   codes shown in the portal's "claim matching errors" dialog
+#                   that mean this error type
+#   justification:  text for the form. Placeholders: {auth} {service_date} {caregiver}
+# ---------------------------------------------------------------------------
+error_types:
+  VSTR:
+    description: Clock-in (start) verification missing
+    portal_codes: [VSTR]
+    critical_error: VVER          # the state form files start and end misses under VVER
+    reason_code: "140"
+    auto: true
+    justification: >-
+      The caregiver was unable to properly clock in/out for this visit. The shift was
+      completed as scheduled and authorized, and a manual entry was added to reflect the
+      correct service times.
+
+  VVER:
+    description: Clock-out (end) verification missing
+    portal_codes: [VVER]
+    critical_error: VVER
+    reason_code: "140"
+    auto: true
+    justification: >-
+      The caregiver was unable to properly clock in/out for this visit. The shift was
+      completed as scheduled and authorized, and a manual entry was added to reflect the
+      correct service times.
+
+  VLOC:
+    description: Clock-in/out location differs from the service address
+    portal_codes: [VLOC]
+    critical_error: VLOC
+    reason_code: "150"
+    auto: true
+    signer_must_confirm: true     # generic justification — reviewer confirms it's true for this visit
+    justification: >-
+      The visit was completed as scheduled and authorized. The EVV clock-in/clock-out
+      location was captured at a location other than the scheduled service address;
+      services were provided to the client for the recorded service times.
+
+  AUTH:
+    description: Claim did not match a service authorization
+    portal_codes: []              # TODO: add the portal's code for an authorization mismatch
+    critical_error: null          # left for the signer to choose
+    reason_code: "120"
+    auto: false
+    justification: >-
+      The visit was completed as scheduled and authorized. The claim did not match a
+      service authorization in the system. The service authorization on file for this
+      client and service is {auth}.
+
+  KNOWN:
+    description: Fill known information only; signer completes the rest
+    portal_codes: []
+    critical_error: null
+    reason_code: null
+    auto: false
+    justification: ""
+
+# Which operator decisions are allowed with `alora-evv decide <visit> <choice>`.
+# Any error type key above is allowed, plus SKIP.
+decision_extras: [SKIP]
+
+# ---------------------------------------------------------------------------
+# Reason codes on the state form.
+#   label:      the Reason Code radio text (matched by "starts with")
+#   sub_group:  follow-up question's field ID (radio group or dropdown)
+#   sub_label:  the follow-up question's label (used when it's a dropdown)
+#   sub_option: the answer to pick
+# ---------------------------------------------------------------------------
+reason_codes:
+  "100": {label: Reason Code 100}   # TODO: meaning + follow-up question (overnight/split visits?)
+  "110": {label: Reason Code 110}   # TODO
+  "120": {label: Reason Code 120}   # TODO: follow-up question, if any
+  "130": {label: Reason Code 130}   # TODO
+  "140":
+    label: Reason Code 140
+    sub_group: single_select_mkm8p2yf
+    sub_label: Adjustment Request Reason Code 140 - No Electronic Clock In or Clock Out
+    sub_option: A. Failure to Clock In, Clock Out or Both
+  "150": {label: Reason Code 150}   # TODO: follow-up question, if any
+
+# ---------------------------------------------------------------------------
+# Programs and service codes (procedure code -> the form's dropdown option).
+#   form_value: what to pick in the form's "Program Type" dropdown
+# ---------------------------------------------------------------------------
+programs:
+  DD:
+    form_value: DD                  # TODO: confirm exact dropdown text
+    dropdown: HCBS DD Waiver Services Code
+    services:
+      "7494": Supported Family Living - 7494
+      "2639": Independent Living - 2639
+      "1796": Behavioral In-Home Habilitation - 1796
+      "9220": Medical In-Home Habilitation - 9220
+      "8148": Respite (In-Home) - 8148
+      "9393": Homemaker - 9393
+      "2656": Respite - 2656
+      "9769": Homemaker - 9769
+      "8317": LRI Personal Care - Agency 8317
+      "3953": LRI Personal Care - Independent 3953
+  AD:
+    form_value: AD
+    dropdown: HCBS AD Waiver Services Code
+    services:
+      "9510": Companion - 9510
+      "5761": Personal Care - 5761
+      "1113": Respite Care (In-Home) - 1113
+      "2500": Disability relate Child-Care (In Home) - 2500
+      "7995": LRI Personal Care - Agency 7995
+      "5011": LRI Personal Care - Independent 5011
+  TBI:
+    form_value: TBI
+    dropdown: HCBS TBI Waiver Services Code
+    services:
+      "7934": TBI Companion - 7934
+      "6222": TBI Personal Care - 6222
+      "6688": TBI Respite Care (In-Home) - 6688
+  PAS:
+    form_value: PAS
+    dropdown: Medicaid PAS Service Code
+    services:
+      "4475": Personal Assistance - 4475
+
+# Codes that can belong to more than one program. The program must come from AxisCare
+# (authorization report "Program" column) or the visit is held for a person to check.
+ambiguous_codes:
+  "7494": May be DD or FSW — the state form has no service-code dropdown for FSW
+
+# ---------------------------------------------------------------------------
+# Field checks.
+# ---------------------------------------------------------------------------
+validation:
+  visit_id: '\d{10}'
+  recipient_medicaid_id: '\d{11}'
+  export_date_formats: ["%m/%d/%Y %I:%M %p", "%m/%d/%Y"]
