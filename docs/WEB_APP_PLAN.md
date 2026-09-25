@@ -25,6 +25,61 @@ form already filled, complete the captcha, and submit. Nothing to install.
 5. Copy the two AxisCare reports into the container's data volume (`docker compose cp caregivers.csv app:/data/axiscare/`), until the AxisCare API backend exists.
 6. Open the site, sign in, run a sweep with "prepare at most 2".
 
+## Deploy runbook (exact commands)
+
+Do steps A–C in the Google Cloud console or Cloud Shell, D on the VM. Nothing here needs
+to be typed on a staff computer.
+
+**A. Project (once).** Console → New project `alora-sweep` → attach billing. Accept the
+HIPAA BAA: console → Compliance (or Workspace admin → Account → Legal and compliance →
+Google Cloud BAA). Enable the Compute Engine API.
+
+**B. VM and address (Cloud Shell).**
+```
+gcloud config set project alora-sweep
+gcloud compute addresses create sweep-ip --region us-central1
+gcloud compute instances create sweep-vm --zone us-central1-a --machine-type e2-small \
+  --image-family debian-12 --image-project debian-cloud --boot-disk-size 20GB \
+  --address sweep-ip --tags http-server,https-server --shielded-secure-boot
+gcloud compute addresses describe sweep-ip --region us-central1 --format 'value(address)'
+```
+If the default network has no `default-allow-http` / `default-allow-https` rules:
+```
+gcloud compute firewall-rules create allow-web --allow tcp:80,tcp:443 --target-tags http-server,https-server
+```
+
+**C. DNS and sign-in.** Add an A record `sweep` → the address from step B, in the DNS
+of alorasupports.com (Google Workspace → Domains, or the registrar). Then console → APIs &
+Services → OAuth consent screen → *Internal* → Credentials → Create OAuth client ID → *Web
+application*, authorized redirect URI `https://sweep.alorasupports.com/auth/callback`.
+Keep the client ID and secret for the `.env` file.
+
+**D. On the VM.** `gcloud compute ssh sweep-vm --zone us-central1-a`, then:
+```
+curl -fsSL https://raw.githubusercontent.com/AloraSupports/Sweep-Dreams/main/deploy/setup-vm.sh -o setup-vm.sh
+bash setup-vm.sh
+```
+(The raw URL needs the repo to be public or a token; for a private repo, paste the file
+over with `gcloud compute scp deploy/setup-vm.sh sweep-vm:~ --zone us-central1-a`.)
+The script installs Docker, makes a read-only deploy key for the private repo, clones,
+creates `deploy/.env`, and probes whether the VM can reach the portal and the state form.
+Then:
+```
+nano ~/sweep/deploy/.env            # fill every line; the session secret is any long random string
+cd ~/sweep/deploy && docker compose up -d --build
+docker compose logs -f app          # watch the first start
+docker compose cp caregivers.csv app:/data/axiscare/
+docker compose cp authorizations.csv app:/data/axiscare/
+docker compose exec app alora-evv check
+```
+Open `https://sweep.alorasupports.com`, sign in with an @alorasupports.com account, and run
+a sweep with "prepare at most 1". The first sweep is the cloud-IP portal login test.
+
+**Updating later:** `cd ~/sweep && git pull && cd deploy && docker compose up -d --build`.
+
+**Backups:** the only state is the `data` volume (ledger, portal session, AxisCare CSVs).
+`docker run --rm -v deploy_data:/data -v $PWD:/out debian tar czf /out/data.tgz /data`.
+
 ## Known risks to test early
 
 - **Portal login from a cloud IP.** If Mobile Caregiver+ blocks or challenges it, ask the vendor about allow-listing the VM's static IP. Fallback: run the portal read on an office computer and upload the export.
